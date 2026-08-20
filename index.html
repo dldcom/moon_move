@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#07111f" />
+    <meta name="description" content="날짜를 움직이며 달의 모양 변화를 관찰하는 Three.js 학습 실험실" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><circle cx=%2216%22 cy=%2216%22 r=%2213%22 fill=%22%23f4d77c%22/></svg>" />
+    <title>달 관찰 실험실</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="game-canvas" aria-label="달의 모양과 움직임을 보여 주는 관찰 화면"></canvas>
+      <section id="intro" class="screen-layer" aria-labelledby="intro-title">
+        <h1 id="intro-title" class="eyebrow">달 관찰 실험실</h1>
+        <div class="dialogue" aria-live="polite">
+          <p id="dialogue-text"></p><span class="typing-cursor" aria-hidden="true"></span>
+        </div>
+        <button id="start-button" class="primary-button" type="button" disabled>
+          달의 움직임 관찰하기 <span aria-hidden="true">→</span>
+        </button>
+      </section>
+      <section id="lab-ui" class="screen-layer is-hidden" aria-label="달 관찰 조작 도구">
+        <header class="date-display" aria-live="polite">
+          <strong id="date-label">음력 3일</strong>
+          <span id="time-label">오후 7:00</span>
+          <small id="phase-label">초승달</small>
+        </header>
+        <div id="split-labels" class="split-labels is-hidden" aria-hidden="true">
+          <span>지구에서 본 하늘</span><span>우주에서 본 모습</span>
+        </div>
+        <div id="guide-note" class="guide-note is-hidden" aria-live="polite">
+          달은 언제나 태양을 향한 절반이 밝아요.
+        </div>
+        <div class="top-actions">
+          <button id="view-button" class="text-button" type="button">우주에서도 살펴볼까?</button>
+        </div>
+        <div class="timeline-panel">
+          <button id="play-button" class="icon-button" type="button" aria-label="시간 일시정지">Ⅱ</button>
+          <label class="timeline-label" for="time-slider">
+            <span class="sr-only">음력 날짜와 시간</span>
+            <input id="time-slider" type="range" min="0" max="29.53059" step="0.002" value="2.7917" />
+          </label>
+          <div class="timeline-ends" aria-hidden="true"><span>1일</span><span>30일</span></div>
+        </div>
+      </section>
+      <button id="skip-journey" class="skip-button is-hidden" type="button">건너뛰기</button>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
