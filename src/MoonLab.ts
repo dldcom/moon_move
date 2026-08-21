@@ -21,6 +21,11 @@ type SkyBackdrop = {
 
 const SKY_NIGHT = new THREE.Color('#06111f');
 const PLAYBACK_DAYS_PER_SECOND = 1 / 6;
+const SKY_HORIZON_Y = -2.35;
+const SKY_MOON_ALTITUDE_RANGE = 5.1;
+const SPACE_MOON_ORBIT_RADIUS = 3.15;
+const EARTH_RADIUS = 0.78;
+const OBSERVER_SURFACE_RADIUS = 0.86;
 
 export class MoonLab {
   private readonly renderer: THREE.WebGLRenderer;
@@ -35,9 +40,17 @@ export class MoonLab {
   private readonly skyMoon: SkyMoonModel;
   private readonly spaceMoon: THREE.Mesh;
   private readonly earth: THREE.Mesh;
+  private readonly spaceSun: THREE.Group;
+  private readonly spaceObserver: THREE.Group;
+  private readonly observerView: THREE.Group;
+  private readonly sunLabel: THREE.Sprite;
+  private readonly earthLabel: THREE.Sprite;
+  private readonly moonLabel: THREE.Sprite;
+  private readonly observerLabel: THREE.Sprite;
   private readonly skyStars: THREE.Points;
   private readonly introStars: THREE.Points;
   private readonly skyBackdrop: SkyBackdrop;
+  private readonly skyHorizon: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   private readonly moonTexture: THREE.CanvasTexture;
   private readonly resizeObserver: ResizeObserver;
 
@@ -80,12 +93,21 @@ export class MoonLab {
     this.skyMoon = createSkyMoonModel(this.moonTexture, 0.78);
     this.spaceMoon = new THREE.Mesh(
       new THREE.SphereGeometry(0.46, 48, 32),
-      new THREE.MeshStandardMaterial({ map: this.moonTexture, roughness: 0.92, color: '#f4f0df' }),
+      new THREE.MeshStandardMaterial({ map: this.moonTexture, roughness: 0.94, color: '#f4f0df', metalness: 0 }),
     );
+    addMoonRotationMarker(this.spaceMoon);
     this.earth = createEarth();
+    this.spaceSun = createSpaceSun();
+    this.spaceObserver = createSpaceObserver();
+    this.observerView = createObserverView();
+    this.sunLabel = createSpaceLabel('태양', '#5c4616');
+    this.earthLabel = createSpaceLabel('지구', '#174a68');
+    this.moonLabel = createSpaceLabel('달', '#4b4a45');
+    this.observerLabel = createSpaceLabel('관측자', '#18536a');
     this.skyStars = createStars(180, 19);
     this.introStars = createStars(110, 7);
     this.skyBackdrop = createSkyBackdrop();
+    this.skyHorizon = createSkyHorizon();
 
     this.setupScenes();
     this.bindUi();
@@ -115,40 +137,39 @@ export class MoonLab {
   private setupScenes(): void {
     this.introCamera.position.set(0, 0, 7.3);
     this.skyCamera.position.set(0, 0, 12);
-    this.spaceCamera.position.set(0, 0, 14);
+    this.spaceCamera.position.set(-1, 0, 14);
     this.introScene.background = SKY_NIGHT.clone();
     this.skyScene.background = null;
     this.spaceScene.background = new THREE.Color('#050b15');
 
     this.introScene.add(this.introStars, this.introMoon.root, this.introMoon.light, this.introMoon.lightTarget);
-    this.skyScene.add(this.skyBackdrop.mesh, this.skyStars, this.skyMoon.root);
+    this.skyScene.add(this.skyBackdrop.mesh, this.skyStars, this.skyMoon.root, this.skyHorizon);
 
     const orbit = new THREE.LineLoop(
       new THREE.BufferGeometry().setFromPoints(
         Array.from({ length: 128 }, (_, index) => {
           const angle = (index / 128) * Math.PI * 2;
-          return new THREE.Vector3(Math.cos(angle) * 3.15, Math.sin(angle) * 3.15, 0);
+          return new THREE.Vector3(Math.cos(angle) * SPACE_MOON_ORBIT_RADIUS, Math.sin(angle) * SPACE_MOON_ORBIT_RADIUS, 0);
         }),
       ),
       new THREE.LineBasicMaterial({ color: '#6686a2', transparent: true, opacity: 0.34 }),
     );
-    this.spaceScene.add(orbit, this.earth, this.spaceMoon);
-
-    const sun = createSpaceSun();
-    sun.position.set(-5.45, 0, 0);
-    this.spaceScene.add(sun);
-
-    const sunlight = new THREE.DirectionalLight('#fff3c4', 3.25);
-    sunlight.position.set(-9, 0, 3.5);
-    sunlight.target.position.set(0, 0, 0);
-    this.spaceScene.add(sunlight, sunlight.target, new THREE.AmbientLight('#4e6682', 0.035));
-    for (const y of [-0.58, 0, 0.58]) {
-      const arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(-4.6, y, 0.35), 2.2, 0xf4c95d, 0.19, 0.1);
-      const lineMaterial = arrow.line.material as THREE.LineBasicMaterial;
-      lineMaterial.transparent = true;
-      lineMaterial.opacity = 0.65;
-      this.spaceScene.add(arrow);
-    }
+    this.spaceSun.position.set(-5.45, 0, 0);
+    this.spaceScene.add(
+      this.spaceSun,
+      orbit,
+      this.observerView,
+      this.earth,
+      this.spaceMoon,
+      this.spaceObserver,
+      this.sunLabel,
+      this.earthLabel,
+      this.moonLabel,
+      this.observerLabel,
+      new THREE.AmbientLight('#4e6682', 0.045),
+    );
+    this.sunLabel.position.set(-5.45, -1.35, 0.95);
+    this.earthLabel.position.set(0, 1.35, 0.95);
   }
 
   private bindUi(): void {
@@ -251,25 +272,47 @@ export class MoonLab {
     const moment = getLunarMoment(this.elapsedDays);
     const daylight = daylightAmount(moment.hour);
     const sunHourAngle = ((moment.hour - 12) / 24) * Math.PI * 2;
-    const moonHourAngle = sunHourAngle - moment.phaseAngle;
+    const orbitAngle = Math.PI + moment.phaseAngle;
+    const observerAngle = Math.PI + sunHourAngle;
+
+    const spaceMoonX = Math.cos(orbitAngle) * SPACE_MOON_ORBIT_RADIUS;
+    const spaceMoonY = Math.sin(orbitAngle) * SPACE_MOON_ORBIT_RADIUS;
+    const observerX = Math.cos(observerAngle) * OBSERVER_SURFACE_RADIUS;
+    const observerY = Math.sin(observerAngle) * OBSERVER_SURFACE_RADIUS;
+    const toMoonX = spaceMoonX - observerX;
+    const toMoonY = spaceMoonY - observerY;
+    const toMoonLength = Math.max(0.001, Math.hypot(toMoonX, toMoonY));
+    const observerUpX = Math.cos(observerAngle);
+    const observerUpY = Math.sin(observerAngle);
+    const moonAltitude = (observerUpX * toMoonX + observerUpY * toMoonY) / toMoonLength;
+    const moonLateral = (observerUpX * toMoonY - observerUpY * toMoonX) / toMoonLength;
 
     const horizontalTravel = this.skyCamera.right * 0.78;
-    const moonX = -Math.sin(moonHourAngle) * horizontalTravel;
-    const moonY = Math.cos(moonHourAngle) * 3.15 - 0.15;
+    const moonX = -moonLateral * horizontalTravel;
+    const moonY = SKY_HORIZON_Y + moonAltitude * SKY_MOON_ALTITUDE_RANGE;
     this.skyMoon.root.position.set(moonX, moonY, 0);
     const lightDirection = this.skyMoon.material.uniforms.uLightDirection.value as THREE.Vector3;
     lightDirection.set(Math.sin(moment.phaseAngle), 0, -Math.cos(moment.phaseAngle)).normalize();
     this.skyMoon.material.uniforms.uVisibility.value = moonVisibility(moment.hour);
-    this.skyMoon.root.visible = moonY > -2.35;
 
     const palette = sampleSkyPalette(moment.hour);
     (this.skyBackdrop.material.uniforms.uTop.value as THREE.Color).copy(palette.top);
     (this.skyBackdrop.material.uniforms.uBottom.value as THREE.Color).copy(palette.bottom);
+    this.skyHorizon.material.color.copy(palette.bottom).multiplyScalar(0.38);
     const starsMaterial = this.skyStars.material as THREE.PointsMaterial;
     starsMaterial.opacity = Math.pow(1 - daylight, 1.8) * 0.9;
 
-    const orbitAngle = Math.PI + moment.phaseAngle;
-    this.spaceMoon.position.set(Math.cos(orbitAngle) * 3.15, Math.sin(orbitAngle) * 3.15, 0);
+    this.spaceMoon.position.set(spaceMoonX, spaceMoonY, 0);
+    this.spaceMoon.rotation.z = orbitAngle + Math.PI;
+    this.moonLabel.position.set(spaceMoonX, spaceMoonY - 0.78, 0.95);
+
+    this.earth.rotation.z = observerAngle;
+    this.spaceObserver.position.set(observerX, observerY, 0.82);
+    this.spaceObserver.rotation.z = observerAngle - Math.PI / 2;
+    this.observerLabel.position.set(observerX * 1.48, observerY * 1.48, 1.05);
+    this.observerView.position.set(observerX, observerY, -0.82);
+    this.observerView.rotation.z = observerAngle - Math.PI / 2;
+    this.spaceSun.rotation.z = moment.cycleDay * 0.08;
     this.slider.value = String(moment.cycleDay);
     this.updateUi(moment);
   }
@@ -361,6 +404,7 @@ export class MoonLab {
     this.labUi.classList.remove('journey-hidden');
     this.splitLabels.classList.remove('is-hidden');
     this.guideNote.classList.remove('is-hidden');
+    this.guideNote.textContent = '빛 받은 쪽만 밝아요 · 시야 안의 달만 하늘에 보여요';
     this.skipJourney.classList.add('is-hidden');
     this.viewButton.textContent = '하늘만 볼까?';
     this.isPlaying = true;
@@ -426,7 +470,13 @@ export class MoonLab {
           this.mode = 'intro';
           this.introUi.classList.remove('is-hidden');
           this.labUi.classList.add('is-hidden');
-        } else if (name === 'split') this.enterSplit();
+        } else if (name === 'split') {
+          this.enterSky();
+          this.enterSplit();
+          this.isPlaying = false;
+          this.updatePlayButton();
+          this.updateSimulation();
+        }
         else {
           this.enterSky();
           if (name === 'sky-dawn') this.elapsedDays = 7 + 5.5 / 24;
@@ -555,6 +605,17 @@ function createSkyBackdrop(): SkyBackdrop {
   return { mesh, material };
 }
 
+function createSkyHorizon(): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> {
+  const height = 12;
+  const geometry = new THREE.PlaneGeometry(40, height);
+  const material = new THREE.MeshBasicMaterial({ color: '#03080d', toneMapped: false });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(0, SKY_HORIZON_Y - height / 2, 1.2);
+  mesh.renderOrder = 10;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
 function createMoonTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 768;
@@ -599,9 +660,117 @@ function createEarth(): THREE.Mesh {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return new THREE.Mesh(
-    new THREE.SphereGeometry(0.78, 48, 32),
-    new THREE.MeshStandardMaterial({ map: texture, roughness: 0.82 }),
+    new THREE.SphereGeometry(EARTH_RADIUS, 48, 32),
+    new THREE.MeshStandardMaterial({ map: texture, roughness: 0.86, metalness: 0 }),
   );
+}
+
+function addMoonRotationMarker(moon: THREE.Mesh): void {
+  const marker = new THREE.Mesh(
+    new THREE.CircleGeometry(0.075, 20),
+    new THREE.MeshBasicMaterial({ color: '#69675f', transparent: true, opacity: 0.86, depthWrite: false }),
+  );
+  marker.name = 'moonRotationMarker';
+  marker.position.set(0.18, 0.12, 0.445);
+  moon.add(marker);
+}
+
+function createSpaceObserver(): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'earthObserver';
+
+  const skin = new THREE.MeshBasicMaterial({ color: '#f2b68f', toneMapped: false });
+  const jacket = new THREE.MeshBasicMaterial({ color: '#ffd45c', toneMapped: false });
+  const trousers = new THREE.MeshBasicMaterial({ color: '#315a8a', toneMapped: false });
+  const cap = new THREE.MeshBasicMaterial({ color: '#ef6c66', toneMapped: false });
+  const dark = new THREE.MeshBasicMaterial({ color: '#172130', toneMapped: false });
+
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 0.09, 4, 10), jacket);
+  body.position.y = 0.135;
+  root.add(body);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.065, 16, 12), skin);
+  head.position.y = 0.285;
+  root.add(head);
+
+  const hat = new THREE.Mesh(new THREE.SphereGeometry(0.071, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), cap);
+  hat.position.y = 0.31;
+  root.add(hat);
+
+  const eyeGeometry = new THREE.CircleGeometry(0.008, 10);
+  for (const x of [-0.022, 0.022]) {
+    const eye = new THREE.Mesh(eyeGeometry, dark);
+    eye.position.set(x, 0.292, 0.061);
+    root.add(eye);
+  }
+
+  const limbGeometry = new THREE.CylinderGeometry(0.018, 0.022, 0.12, 8);
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Mesh(limbGeometry, jacket);
+    arm.position.set(side * 0.072, 0.145, 0);
+    arm.rotation.z = side * 0.42;
+    root.add(arm);
+
+    const leg = new THREE.Mesh(limbGeometry, trousers);
+    leg.position.set(side * 0.034, 0.025, 0);
+    leg.rotation.z = side * 0.2;
+    root.add(leg);
+  }
+
+  const locationRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.15, 0.18, 28),
+    new THREE.MeshBasicMaterial({ color: '#7edcff', transparent: true, opacity: 0.76, side: THREE.DoubleSide, toneMapped: false }),
+  );
+  locationRing.position.y = 0.13;
+  locationRing.renderOrder = 20;
+  root.add(locationRing);
+  return root;
+}
+
+function createObserverView(): THREE.Group {
+  const root = new THREE.Group();
+  root.name = 'observerVisibleSky';
+  const radius = 4.45;
+  const segments = 48;
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0);
+  for (let index = 0; index <= segments; index += 1) {
+    const angle = (index / segments) * Math.PI;
+    shape.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+  }
+  shape.closePath();
+
+  const sector = new THREE.Mesh(
+    new THREE.ShapeGeometry(shape),
+    new THREE.MeshBasicMaterial({
+      color: '#6ed7ff',
+      transparent: true,
+      opacity: 0.055,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  root.add(sector);
+
+  const boundaryGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0), new THREE.Vector3(radius, 0, 0),
+    new THREE.Vector3(0, 0, 0), new THREE.Vector3(-radius, 0, 0),
+  ]);
+  root.add(new THREE.LineSegments(
+    boundaryGeometry,
+    new THREE.LineBasicMaterial({ color: '#83dcff', transparent: true, opacity: 0.52, depthWrite: false }),
+  ));
+
+  const arcPoints = Array.from({ length: segments + 1 }, (_, index) => {
+    const angle = (index / segments) * Math.PI;
+    return new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0.01);
+  });
+  root.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(arcPoints),
+    new THREE.LineBasicMaterial({ color: '#83dcff', transparent: true, opacity: 0.2, depthWrite: false }),
+  ));
+  return root;
 }
 
 function createStars(count: number, seed: number): THREE.Points {
@@ -623,12 +792,62 @@ function createSunDisc(radius: number): THREE.Group {
   return group;
 }
 
+function createSpaceLabel(text: string, background: string): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 96;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Canvas 2D context is unavailable.');
+
+  context.fillStyle = background;
+  context.beginPath();
+  context.roundRect(10, 10, 236, 76, 30);
+  context.fill();
+  context.strokeStyle = 'rgba(255,255,255,0.42)';
+  context.lineWidth = 3;
+  context.stroke();
+  context.fillStyle = '#fffdf2';
+  context.font = '700 42px "Noto Sans KR", sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText(text, 128, 50);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, toneMapped: false }));
+  sprite.scale.set(0.92, 0.345, 1);
+  sprite.renderOrder = 30;
+  return sprite;
+}
+
 function createSpaceSun(): THREE.Group {
   const group = createSunDisc(0.72);
+  group.name = 'spaceSun';
+
+  const rayPoints: THREE.Vector3[] = [];
+  const rayCount = 40;
+  for (let index = 0; index < rayCount; index += 1) {
+    const angle = (index / rayCount) * Math.PI * 2;
+    const innerRadius = 0.92 + (index % 3) * 0.04;
+    const outerRadius = 7.8 + (index % 5) * 0.28;
+    rayPoints.push(
+      new THREE.Vector3(Math.cos(angle) * innerRadius, Math.sin(angle) * innerRadius, -0.9),
+      new THREE.Vector3(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius, -0.9),
+    );
+  }
+  const rays = new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(rayPoints),
+    new THREE.LineBasicMaterial({ color: '#f6d675', transparent: true, opacity: 0.16, depthWrite: false }),
+  );
+  rays.name = 'radialSunlight';
+  group.add(rays);
+
   for (const scale of [1.35, 1.62]) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.72 * scale, 0.76 * scale, 48), new THREE.MeshBasicMaterial({ color: '#f6c85c', transparent: true, opacity: 0.12, side: THREE.DoubleSide }));
     group.add(ring);
   }
+  group.add(new THREE.PointLight('#fff3c4', 3.4, 0, 0));
   return group;
 }
 
@@ -668,8 +887,8 @@ function sampleSkyPalette(hourValue: number): { top: THREE.Color; bottom: THREE.
 function moonVisibility(hourValue: number): number {
   const hour = ((hourValue % 24) + 24) % 24;
   const keyframes = [
-    [0, 1], [3.5, 1], [4.5, 0.55], [5.5, 0.22], [6.5, 0.1],
-    [16.5, 0.12], [18, 0.52], [19.5, 1], [24, 1],
+    [0, 1], [3.5, 1], [4.5, 0.78], [5.5, 0.58], [6.5, 0.42],
+    [16.5, 0.42], [18, 0.62], [19.5, 1], [24, 1],
   ] as const;
   for (let index = 0; index < keyframes.length - 1; index += 1) {
     const [startHour, startOpacity] = keyframes[index];
