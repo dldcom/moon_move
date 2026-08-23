@@ -44,11 +44,11 @@ const AUTO_CAMERA_ELEVATION = Math.PI * 28 / 180;
 const AUTO_CAMERA_LOOK_AHEAD = 0.18;
 const INITIAL_OBSERVER_CAMERA_BACKOFF = 2.35;
 const PHASE_STOPS = [
-  { day: 4, hour: 18, name: '초승달', guide: '음력 3~4일 무렵에는 초승달이 떠.', image: '/assets/learning-moons/waxing-crescent.png' },
-  { day: 7, hour: 19, name: '상현달', guide: '음력 7~8일 무렵에는 상현달이 떠.', image: '/assets/learning-moons/first-quarter.png' },
-  { day: 15, hour: 0, name: '보름달', guide: '음력 15일 무렵에는 보름달이 떠.', image: '/assets/learning-moons/full-moon.png' },
-  { day: 22, hour: 3, name: '하현달', guide: '음력 22~23일 무렵에는 하현달이 떠.', image: '/assets/learning-moons/last-quarter.png' },
-  { day: 27, hour: 6, name: '그믐달', guide: '음력 27~28일 무렵에는 그믐달이 떠.', image: '/assets/learning-moons/waning-crescent.png' },
+  { day: 4, hour: 18, name: '초승달', guide: '음력 3~4일 무렵에는 초승달이 떠.', image: '/assets/learning-moons/waxing-crescent.webp' },
+  { day: 7, hour: 19, name: '상현달', guide: '음력 7~8일 무렵에는 상현달이 떠.', image: '/assets/learning-moons/first-quarter.webp' },
+  { day: 15, hour: 0, name: '보름달', guide: '음력 15일 무렵에는 보름달이 떠.', image: '/assets/learning-moons/full-moon.webp' },
+  { day: 22, hour: 3, name: '하현달', guide: '음력 22~23일 무렵에는 하현달이 떠.', image: '/assets/learning-moons/last-quarter.webp' },
+  { day: 27, hour: 6, name: '그믐달', guide: '음력 27~28일 무렵에는 그믐달이 떠.', image: '/assets/learning-moons/waning-crescent.webp' },
 ] as const;
 
 export class MoonLab {
@@ -144,6 +144,8 @@ export class MoonLab {
   private readonly learningGuideMessage = required<HTMLElement>('learning-guide-message');
   private readonly learningGuideConfirm = required<HTMLButtonElement>('learning-guide-confirm');
   private readonly automaticStopsShown = new Set<number>();
+  private readonly phaseGuideImages = new Map<string, HTMLImageElement>();
+  private phaseGuideRequest = 0;
   private guideStep: 'closed' | 'intro' | 'phase' = 'closed';
   private resumeAfterGuide = false;
 
@@ -179,6 +181,7 @@ export class MoonLab {
     this.skyHorizon = createSkyHorizon();
 
     this.setupScenes();
+    this.preloadPhaseGuideImages();
     this.bindUi();
     this.installTestHooks();
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -284,7 +287,7 @@ export class MoonLab {
         this.elapsedDays = value;
         this.updatePlayButton();
         this.updateSimulation();
-        this.showPhaseGuide(index, false);
+        void this.showPhaseGuide(index, false);
       });
       this.phaseMarkers.append(button);
       this.phaseMarkerButtons.push(button);
@@ -347,7 +350,7 @@ export class MoonLab {
     const stop = PHASE_STOPS[crossedStop];
     this.elapsedDays = stop.day - 1 + stop.hour / 24;
     this.isPlaying = false;
-    this.showPhaseGuide(crossedStop, true);
+    void this.showPhaseGuide(crossedStop, true);
   }
 
   private showIntroGuide(): void {
@@ -364,13 +367,35 @@ export class MoonLab {
     this.learningGuideConfirm.focus();
   }
 
-  private showPhaseGuide(index: number, resumeAfterConfirm: boolean): void {
+  private preloadPhaseGuideImages(): void {
+    for (const stop of PHASE_STOPS) {
+      const image = new Image();
+      image.decoding = 'async';
+      image.src = stop.image;
+      this.phaseGuideImages.set(stop.image, image);
+      void image.decode().catch(() => { /* The modal retries decoding before it opens. */ });
+    }
+  }
+
+  private async showPhaseGuide(index: number, resumeAfterConfirm: boolean): Promise<void> {
     const stop = PHASE_STOPS[index];
+    const request = ++this.phaseGuideRequest;
     if (resumeAfterConfirm) this.automaticStopsShown.add(index);
     this.isPlaying = false;
     this.guideStep = 'phase';
     this.resumeAfterGuide = resumeAfterConfirm;
+    this.learningGuide.classList.add('is-hidden');
+
+    const preloadedImage = this.phaseGuideImages.get(stop.image);
+    if (preloadedImage) {
+      try { await preloadedImage.decode(); } catch { /* The visible image performs one final retry. */ }
+    }
+    if (request !== this.phaseGuideRequest) return;
+
     this.learningGuideMoon.src = stop.image;
+    try { await this.learningGuideMoon.decode(); } catch { /* Show the browser's image fallback if decoding fails. */ }
+    if (request !== this.phaseGuideRequest) return;
+
     this.learningGuideMoon.alt = `${stop.name}의 실제 달 모습`;
     this.learningGuideVisual.classList.remove('is-hidden');
     this.learningGuideKicker.classList.add('is-hidden');

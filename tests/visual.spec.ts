@@ -49,10 +49,22 @@ test('guided intro leads into a continuous moon observation', async ({ page }, t
   await expect(page.locator('#date-label')).toHaveText('음력 4일');
   await expect(page.locator('#time-label')).toHaveText(/오전 6:0[0-1]/);
   await expect(page.locator('.phase-marker')).toHaveCount(5);
+  const phaseGuideImages = [
+    'waxing-crescent.webp', 'first-quarter.webp', 'full-moon.webp',
+    'last-quarter.webp', 'waning-crescent.webp',
+  ];
   const namedPhasePositions: number[] = [];
   for (let index = 0; index < 5; index += 1) {
     await page.locator('.phase-marker').nth(index).click();
     await expect(page.locator('#learning-guide')).toBeVisible();
+    await expect(page.locator('#learning-guide-moon')).toHaveAttribute(
+      'src', `/assets/learning-moons/${phaseGuideImages[index]}`,
+    );
+    expect(await page.locator('#learning-guide-moon').evaluate((image: HTMLImageElement) => ({
+      complete: image.complete,
+      naturalWidth: image.naturalWidth,
+      naturalHeight: image.naturalHeight,
+    }))).toEqual({ complete: true, naturalWidth: 640, naturalHeight: 640 });
     await expect(page.locator('#sky-phase-name')).toBeVisible();
     const box = await page.locator('#sky-phase-name').boundingBox();
     if (!box) throw new Error('Named phase label has no bounding box.');

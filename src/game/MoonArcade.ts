@@ -57,9 +57,7 @@ export class MoonArcade {
     this.rankingToggleButton.addEventListener('click', this.toggleRanking);
     this.reviewButton.addEventListener('click', this.reviewLearning);
     this.fillProfile(this.leaderboard.loadRecentProfile());
-    this.playerStatus.textContent = this.leaderboard.connected
-      ? '입력한 정보는 온라인 랭킹에 공개됩니다.'
-      : 'Supabase 연결 전이라 이 기기의 임시 랭킹으로 실행됩니다.';
+    this.syncConnectionStatus();
     this.playerGate.classList.remove('is-hidden');
   }
 
@@ -81,6 +79,7 @@ export class MoonArcade {
     this.startRunButton.disabled = true;
     this.startRunButton.textContent = '준비 중…';
     this.playerStatus.textContent = '게임 세션을 준비하고 있어요.';
+    this.playerStatus.classList.remove('is-hidden');
     const seed = await this.leaderboard.startRun(this.profile);
     this.state.reset(seed);
     this.submitted = false;
@@ -99,6 +98,7 @@ export class MoonArcade {
     this.destroyGame();
     this.gameOver.classList.add('is-hidden');
     this.fillProfile(this.leaderboard.loadRecentProfile());
+    this.syncConnectionStatus();
     this.playerGate.classList.remove('is-hidden');
     this.schoolInput.focus();
   };
@@ -213,6 +213,14 @@ export class MoonArcade {
     this.gradeInput.value = profile ? String(profile.grade) : '';
     this.classInput.value = profile ? String(profile.classNo) : '';
     this.studentNoInput.value = profile ? String(profile.studentNo) : '';
+  }
+
+  private syncConnectionStatus(): void {
+    const message = this.leaderboard.connected
+      ? ''
+      : 'Supabase 연결 전이라 이 기기의 임시 랭킹으로 실행됩니다.';
+    this.playerStatus.textContent = message;
+    this.playerStatus.classList.toggle('is-hidden', !message);
   }
 }
 
