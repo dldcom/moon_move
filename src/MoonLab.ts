@@ -92,6 +92,7 @@ export class MoonLab {
   private introElapsed = 0;
   private journeyElapsed = 0;
   private pausedForScreenshot = false;
+  private suspended = false;
   private disposed = false;
   private spaceViewMode: SpaceViewMode = 'free';
   private orbitRadius = 14;
@@ -195,6 +196,31 @@ export class MoonLab {
     this.frameId = requestAnimationFrame(this.tick);
   }
 
+  suspend(): void {
+    if (this.suspended || this.disposed) return;
+    this.suspended = true;
+    cancelAnimationFrame(this.frameId);
+  }
+
+  resetToIntro(): void {
+    if (this.disposed) return;
+    this.phaseGuideRequest += 1;
+    this.guideStep = 'closed';
+    this.resumeAfterGuide = false;
+    this.isPlaying = true;
+    this.mode = 'intro';
+    this.learningGuide.classList.add('is-hidden');
+    this.labUi.classList.add('is-hidden');
+    this.labUi.classList.remove('journey-hidden');
+    this.introUi.classList.remove('is-hidden');
+    this.splitLabels.classList.add('is-hidden');
+    this.guideNote.classList.add('is-hidden');
+    this.skipJourney.classList.add('is-hidden');
+    this.observableLitRegion.visible = false;
+    this.resume();
+    this.resize();
+  }
+
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.frameId);
@@ -204,6 +230,13 @@ export class MoonLab {
     this.moonTexture.dispose();
     delete window.__THREE_GAME_DIAGNOSTICS__;
     delete window.__THREE_GAME_TEST_HOOKS__;
+  }
+
+  private resume(): void {
+    if (!this.suspended || this.disposed) return;
+    this.suspended = false;
+    this.lastTime = performance.now();
+    this.frameId = requestAnimationFrame(this.tick);
   }
 
   private setupScenes(): void {

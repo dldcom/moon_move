@@ -12,9 +12,12 @@ const fullscreenButton = document.querySelector<HTMLButtonElement>('#fullscreen-
 const fullscreenLabel = document.querySelector<HTMLElement>('#fullscreen-label');
 const homeButton = document.querySelector<HTMLButtonElement>('#home-button');
 const fullscreenStatus = document.querySelector<HTMLElement>('#fullscreen-status');
+const gameButton = document.querySelector<HTMLButtonElement>('#game-button');
+const arcadeShell = document.querySelector<HTMLElement>('#arcade-shell');
 if (!appRoot || !globalActions || !fullscreenButton || !fullscreenLabel || !homeButton || !fullscreenStatus) {
   throw new Error('Missing global screen controls.');
 }
+if (!gameButton || !arcadeShell) throw new Error('Missing arcade entry UI.');
 
 let app: MoonLab | null = new MoonLab(canvas);
 let arcade: MoonArcade | null = null;
@@ -57,11 +60,15 @@ if (!fullscreenSupported) {
   });
 }
 
-homeButton.addEventListener('click', async () => {
-  if (document.fullscreenElement) {
-    try { await document.exitFullscreen(); } catch { /* Reload still returns to the main screen. */ }
-  }
-  window.location.reload();
+homeButton.addEventListener('click', () => {
+  arcade?.dispose();
+  arcade = null;
+  document.body.classList.remove('is-arcade-active');
+  arcadeShell.classList.add('is-hidden');
+  canvas.classList.remove('is-game-hidden');
+  gameButton.disabled = false;
+  app?.resetToIntro();
+  homeButton.classList.add('is-hidden');
 });
 
 learningButton?.addEventListener('click', () => homeButton.classList.remove('is-hidden'));
@@ -71,23 +78,18 @@ if (sessionStorage.getItem('moon-open-learning') === '1') {
   requestAnimationFrame(() => learningButton?.click());
 }
 
-const gameButton = document.querySelector<HTMLButtonElement>('#game-button');
-const arcadeShell = document.querySelector<HTMLElement>('#arcade-shell');
-if (!gameButton || !arcadeShell) throw new Error('Missing arcade entry UI.');
-
 gameButton.addEventListener('click', async () => {
   gameButton.disabled = true;
-  homeButton.classList.remove('is-hidden');
   document.body.classList.add('is-arcade-active');
   const { MoonArcade } = await import('./game/MoonArcade');
-  app?.dispose();
-  app = null;
+  app?.suspend();
   canvas.classList.add('is-game-hidden');
   document.querySelector('#intro')?.classList.add('is-hidden');
   document.querySelector('#lab-ui')?.classList.add('is-hidden');
   arcadeShell.classList.remove('is-hidden');
   arcade = new MoonArcade(arcadeShell);
   arcade.start();
+  homeButton.classList.remove('is-hidden');
 });
 
 if (import.meta.hot) import.meta.hot.dispose(() => {
