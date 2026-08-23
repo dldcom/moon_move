@@ -97,7 +97,7 @@ input[type="range"]::-moz-range-thumb { width: 15px; height: 15px; border: 3px s
 .intro-mode-actions { grid-row: 3; display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-bottom: 12px; }
 .intro-mode-actions .primary-button { min-width: 190px; }
 .mode-number { display: inline-grid; place-items: center; width: 26px; height: 26px; margin-right: 7px; border-radius: 50%; background: rgba(5, 15, 29, 0.35); }
-.game-entry-button { background: #ffca56; color: #251908; border-color: #fff0b3; opacity: 1; transform: translateY(0); }
+.game-entry-button { background: #ffca56; color: #251908; border-color: #fff0b3; }
 .is-game-hidden { display: none !important; }
 .arcade-shell { position: fixed; inset: 0; z-index: 50; overflow: hidden; color: #fff8d5; background: #031e45; font-family: "Noto Sans KR", system-ui, sans-serif; }
 .arcade-shell.is-hidden { display: none; }

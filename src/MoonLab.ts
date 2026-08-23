@@ -124,6 +124,7 @@ export class MoonLab {
   private readonly introUi = required<HTMLElement>('intro');
   private readonly labUi = required<HTMLElement>('lab-ui');
   private readonly startButton = required<HTMLButtonElement>('start-button');
+  private readonly gameButton = required<HTMLButtonElement>('game-button');
   private readonly dateLabel = required<HTMLElement>('date-label');
   private readonly timeLabel = required<HTMLElement>('time-label');
   private readonly phaseLabel = required<HTMLElement>('phase-label');
@@ -432,6 +433,7 @@ export class MoonLab {
     this.introElapsed += delta;
     this.startButton.disabled = false;
     this.startButton.classList.add('is-ready');
+    this.gameButton.classList.add('is-ready');
 
     const phaseProgress = this.reducedMotion ? 0.48 : (this.introElapsed % 18) / 18;
     const angle = phaseProgress * Math.PI * 2;
