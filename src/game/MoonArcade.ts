@@ -201,14 +201,15 @@ export class MoonArcade {
   }
 
   private readProfile(): StudentProfile {
+    const schoolPrefix = this.schoolInput.value.trim().replace(/초등학교$/, '');
     return {
-      school: this.schoolInput.value.trim(), grade: Number(this.gradeInput.value),
+      school: `${schoolPrefix}초등학교`, grade: Number(this.gradeInput.value),
       classNo: Number(this.classInput.value), studentNo: Number(this.studentNoInput.value),
     };
   }
 
   private fillProfile(profile: StudentProfile | null): void {
-    this.schoolInput.value = profile?.school ?? '';
+    this.schoolInput.value = profile?.school.replace(/초등학교$/, '') ?? '';
     this.gradeInput.value = profile ? String(profile.grade) : '';
     this.classInput.value = profile ? String(profile.classNo) : '';
     this.studentNoInput.value = profile ? String(profile.studentNo) : '';

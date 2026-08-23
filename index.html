@@ -75,7 +75,12 @@
           <form id="arcade-player-form" class="player-form">
             <small>MOON ARCADE</small>
             <h2>도전자 정보를 입력하세요</h2>
-            <label>학교명<input id="arcade-school" name="school" maxlength="30" autocomplete="organization" required /></label>
+            <label>학교명
+              <span class="school-name-field">
+                <input id="arcade-school" name="school" maxlength="20" autocomplete="organization" aria-label="학교 이름" required />
+                <span class="school-name-suffix" aria-hidden="true">초등학교</span>
+              </span>
+            </label>
             <div class="student-number-grid">
               <label>학년<input id="arcade-grade" name="grade" type="number" min="1" max="6" inputmode="numeric" required /></label>
               <label>반<input id="arcade-class" name="classNo" type="number" min="1" max="30" inputmode="numeric" required /></label>
