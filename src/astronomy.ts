@@ -37,7 +37,7 @@ function circularDistance(a: number, b: number): number {
 }
 
 export function getPhaseName(cycleDay: number): string {
-  if (circularDistance(cycleDay, 0) < 0.85) return '달이 거의 보이지 않아요';
+  if (circularDistance(cycleDay, 0) < 0.85) return '';
   if (circularDistance(cycleDay, 3) < 1.05) return '초승달';
   if (circularDistance(cycleDay, 7) < 1.05) return '상현달';
   if (circularDistance(cycleDay, 14) < 1.2) return '보름달';

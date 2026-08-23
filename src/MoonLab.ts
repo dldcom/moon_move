@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { daylightAmount, formatKoreanTime, getLunarMoment, wrapCycle } from './astronomy';
 
 type Mode = 'intro' | 'sky' | 'journey' | 'split';
+type SpaceViewMode = 'free' | 'observer';
 
 type MoonModel = {
   root: THREE.Group;
@@ -19,13 +20,36 @@ type SkyBackdrop = {
   material: THREE.ShaderMaterial;
 };
 
+type SkyLandscape = {
+  group: THREE.Group;
+  baseMaterial: THREE.MeshBasicMaterial;
+  farMaterial: THREE.MeshBasicMaterial;
+  nearMaterial: THREE.MeshBasicMaterial;
+  detailMaterial: THREE.MeshBasicMaterial;
+};
+
 const SKY_NIGHT = new THREE.Color('#06111f');
 const PLAYBACK_DAYS_PER_SECOND = 1 / 6;
 const SKY_HORIZON_Y = -2.35;
 const SKY_MOON_ALTITUDE_RANGE = 5.1;
 const SPACE_MOON_ORBIT_RADIUS = 3.15;
 const EARTH_RADIUS = 0.78;
-const OBSERVER_SURFACE_RADIUS = 0.86;
+const OBSERVER_FOOT_OFFSET = 0.038;
+const OBSERVER_SURFACE_RADIUS = EARTH_RADIUS + OBSERVER_FOOT_OFFSET;
+const OBSERVER_LATITUDE = THREE.MathUtils.degToRad(37);
+const FREE_ORBIT_MIN_RADIUS = 11;
+const FREE_ORBIT_MAX_RADIUS = 19;
+const INITIAL_ORBIT_PITCH = 0.39;
+const AUTO_CAMERA_ELEVATION = Math.PI * 28 / 180;
+const AUTO_CAMERA_LOOK_AHEAD = 0.18;
+const INITIAL_OBSERVER_CAMERA_BACKOFF = 2.35;
+const PHASE_STOPS = [
+  { day: 4, hour: 18, name: '초승달', guide: '음력 3~4일 무렵에는 초승달이 떠.', image: '/assets/learning-moons/waxing-crescent.png' },
+  { day: 7, hour: 19, name: '상현달', guide: '음력 7~8일 무렵에는 상현달이 떠.', image: '/assets/learning-moons/first-quarter.png' },
+  { day: 15, hour: 0, name: '보름달', guide: '음력 15일 무렵에는 보름달이 떠.', image: '/assets/learning-moons/full-moon.png' },
+  { day: 22, hour: 3, name: '하현달', guide: '음력 22~23일 무렵에는 하현달이 떠.', image: '/assets/learning-moons/last-quarter.png' },
+  { day: 27, hour: 6, name: '그믐달', guide: '음력 27~28일 무렵에는 그믐달이 떠.', image: '/assets/learning-moons/waning-crescent.png' },
+] as const;
 
 export class MoonLab {
   private readonly renderer: THREE.WebGLRenderer;
@@ -34,7 +58,7 @@ export class MoonLab {
   private readonly spaceScene = new THREE.Scene();
   private readonly introCamera = new THREE.PerspectiveCamera(34, 1, 0.1, 50);
   private readonly skyCamera = new THREE.OrthographicCamera(-8, 8, 4.5, -4.5, 0.1, 50);
-  private readonly spaceCamera = new THREE.OrthographicCamera(-7, 7, 4.5, -4.5, 0.1, 50);
+  private readonly spaceCamera = new THREE.PerspectiveCamera(43, 1, 0.04, 80);
   private readonly journeyCamera = new THREE.PerspectiveCamera(46, 1, 0.1, 50);
   private readonly introMoon: MoonModel;
   private readonly skyMoon: SkyMoonModel;
@@ -43,19 +67,23 @@ export class MoonLab {
   private readonly spaceSun: THREE.Group;
   private readonly spaceObserver: THREE.Group;
   private readonly observerView: THREE.Group;
+  private readonly observerHorizon: THREE.Group;
+  private readonly spaceGuides = new THREE.Group();
+  private readonly observableLitRegion: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   private readonly sunLabel: THREE.Sprite;
   private readonly earthLabel: THREE.Sprite;
   private readonly moonLabel: THREE.Sprite;
   private readonly observerLabel: THREE.Sprite;
   private readonly skyStars: THREE.Points;
+  private readonly spaceStars: THREE.Points;
   private readonly introStars: THREE.Points;
   private readonly skyBackdrop: SkyBackdrop;
-  private readonly skyHorizon: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private readonly skyHorizon: SkyLandscape;
   private readonly moonTexture: THREE.CanvasTexture;
   private readonly resizeObserver: ResizeObserver;
 
   private mode: Mode = 'intro';
-  private elapsedDays = 2 + 19 / 24;
+  private elapsedDays = 2 + 9.5 / 24;
   private isPlaying = true;
   private reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   private frameId = 0;
@@ -65,20 +93,59 @@ export class MoonLab {
   private journeyElapsed = 0;
   private pausedForScreenshot = false;
   private disposed = false;
+  private spaceViewMode: SpaceViewMode = 'free';
+  private orbitRadius = 14;
+  private observerCameraBackoff = INITIAL_OBSERVER_CAMERA_BACKOFF;
+  private readonly orbitTarget = new THREE.Vector3(0, 0, 0);
+  private readonly spaceLookTarget = new THREE.Vector3(0, 0, 0);
+  private readonly desiredCameraPosition = new THREE.Vector3(0, 0, 14);
+  private readonly desiredLookTarget = new THREE.Vector3(0, 0, 0);
+  private readonly observerCameraAxis = new THREE.Vector3();
+  private readonly freeCameraDirection = new THREE.Vector3(0, Math.sin(INITIAL_ORBIT_PITCH), Math.cos(INITIAL_ORBIT_PITCH));
+  private readonly freeCameraUp = new THREE.Vector3(0, Math.cos(INITIAL_ORBIT_PITCH), -Math.sin(INITIAL_ORBIT_PITCH));
+  private readonly freeCameraRight = new THREE.Vector3(1, 0, 0);
+  private readonly orbitRotation = new THREE.Quaternion();
+  private readonly autoCameraMoonDirection = new THREE.Vector3();
+  private readonly autoCameraWorldUp = new THREE.Vector3(0, 0, 1);
+  private readonly journeyStartPosition = new THREE.Vector3();
+  private readonly journeyEndPosition = new THREE.Vector3();
+  private readonly journeyStartTarget = new THREE.Vector3();
+  private readonly journeyEndTarget = new THREE.Vector3();
+  private readonly journeyLookTarget = new THREE.Vector3();
+  private readonly journeyStartUp = new THREE.Vector3(0, 1, 0);
+  private lastTrackedMoonAngle: number | null = null;
+  private readonly currentObserverPosition = new THREE.Vector3();
+  private readonly observerSurfaceNormal = new THREE.Vector3();
+  private readonly observerLocalUp = new THREE.Vector3(0, 1, 0);
+  private readonly currentMoonPosition = new THREE.Vector3();
+  private currentSpaceExpectedIllumination = 0;
+  private currentSpaceRedIllumination = 0;
 
   private readonly introUi = required<HTMLElement>('intro');
   private readonly labUi = required<HTMLElement>('lab-ui');
-  private readonly dialogueText = required<HTMLParagraphElement>('dialogue-text');
   private readonly startButton = required<HTMLButtonElement>('start-button');
   private readonly dateLabel = required<HTMLElement>('date-label');
   private readonly timeLabel = required<HTMLElement>('time-label');
   private readonly phaseLabel = required<HTMLElement>('phase-label');
   private readonly slider = required<HTMLInputElement>('time-slider');
   private readonly playButton = required<HTMLButtonElement>('play-button');
+  private readonly phaseMarkers = required<HTMLElement>('phase-markers');
+  private readonly skyPhaseName = required<HTMLElement>('sky-phase-name');
   private readonly viewButton = required<HTMLButtonElement>('view-button');
+  private readonly phaseMarkerButtons: HTMLButtonElement[] = [];
   private readonly splitLabels = required<HTMLElement>('split-labels');
   private readonly guideNote = required<HTMLElement>('guide-note');
   private readonly skipJourney = required<HTMLButtonElement>('skip-journey');
+  private readonly learningGuide = required<HTMLElement>('learning-guide');
+  private readonly learningGuideVisual = required<HTMLElement>('learning-guide-visual');
+  private readonly learningGuideMoon = required<HTMLImageElement>('learning-guide-moon');
+  private readonly learningGuideKicker = required<HTMLElement>('learning-guide-kicker');
+  private readonly learningGuideTitle = required<HTMLElement>('learning-guide-title');
+  private readonly learningGuideMessage = required<HTMLElement>('learning-guide-message');
+  private readonly learningGuideConfirm = required<HTMLButtonElement>('learning-guide-confirm');
+  private readonly automaticStopsShown = new Set<number>();
+  private guideStep: 'closed' | 'intro' | 'phase' = 'closed';
+  private resumeAfterGuide = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -95,16 +162,18 @@ export class MoonLab {
       new THREE.SphereGeometry(0.46, 48, 32),
       new THREE.MeshStandardMaterial({ map: this.moonTexture, roughness: 0.94, color: '#f4f0df', metalness: 0 }),
     );
-    addMoonRotationMarker(this.spaceMoon);
     this.earth = createEarth();
     this.spaceSun = createSpaceSun();
     this.spaceObserver = createSpaceObserver();
     this.observerView = createObserverView();
+    this.observerHorizon = createObserverEarthHorizon();
+    this.observableLitRegion = createObservableLitRegion();
     this.sunLabel = createSpaceLabel('태양', '#5c4616');
     this.earthLabel = createSpaceLabel('지구', '#174a68');
     this.moonLabel = createSpaceLabel('달', '#4b4a45');
     this.observerLabel = createSpaceLabel('관측자', '#18536a');
     this.skyStars = createStars(180, 19);
+    this.spaceStars = createSpaceStars(320, 73);
     this.introStars = createStars(110, 7);
     this.skyBackdrop = createSkyBackdrop();
     this.skyHorizon = createSkyHorizon();
@@ -126,7 +195,6 @@ export class MoonLab {
     this.disposed = true;
     cancelAnimationFrame(this.frameId);
     this.resizeObserver.disconnect();
-    this.canvas.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('keydown', this.onKeyDown);
     this.renderer.dispose();
     this.moonTexture.dispose();
@@ -137,13 +205,15 @@ export class MoonLab {
   private setupScenes(): void {
     this.introCamera.position.set(0, 0, 7.3);
     this.skyCamera.position.set(0, 0, 12);
-    this.spaceCamera.position.set(-1, 0, 14);
+    this.spaceCamera.position.copy(this.desiredCameraPosition);
+    this.spaceCamera.lookAt(this.spaceLookTarget);
+    this.spaceCamera.add(this.observerHorizon);
     this.introScene.background = SKY_NIGHT.clone();
     this.skyScene.background = null;
     this.spaceScene.background = new THREE.Color('#050b15');
 
     this.introScene.add(this.introStars, this.introMoon.root, this.introMoon.light, this.introMoon.lightTarget);
-    this.skyScene.add(this.skyBackdrop.mesh, this.skyStars, this.skyMoon.root, this.skyHorizon);
+    this.skyScene.add(this.skyBackdrop.mesh, this.skyStars, this.skyMoon.root, this.skyHorizon.group);
 
     const orbit = new THREE.LineLoop(
       new THREE.BufferGeometry().setFromPoints(
@@ -155,25 +225,32 @@ export class MoonLab {
       new THREE.LineBasicMaterial({ color: '#6686a2', transparent: true, opacity: 0.34 }),
     );
     this.spaceSun.position.set(-5.45, 0, 0);
+    const sunlight = new THREE.DirectionalLight('#fff3c4', 3.4);
+    sunlight.position.set(-10, 0, 0);
+    sunlight.target.position.set(0, 0, 0);
+    this.spaceGuides.add(orbit, this.observerView, this.spaceObserver, this.sunLabel, this.earthLabel, this.moonLabel, this.observerLabel);
     this.spaceScene.add(
       this.spaceSun,
-      orbit,
-      this.observerView,
+      this.spaceStars,
+      this.spaceGuides,
+      this.spaceCamera,
       this.earth,
       this.spaceMoon,
-      this.spaceObserver,
-      this.sunLabel,
-      this.earthLabel,
-      this.moonLabel,
-      this.observerLabel,
+      this.observableLitRegion,
+      sunlight,
+      sunlight.target,
       new THREE.AmbientLight('#4e6682', 0.045),
     );
     this.sunLabel.position.set(-5.45, -1.35, 0.95);
     this.earthLabel.position.set(0, 1.35, 0.95);
+    this.observableLitRegion.visible = false;
+    this.observerHorizon.visible = false;
   }
 
   private bindUi(): void {
-    this.startButton.addEventListener('click', () => this.enterSky());
+    this.setupPhaseMarkers();
+    this.startButton.addEventListener('click', () => this.showIntroGuide());
+    this.learningGuideConfirm.addEventListener('click', () => this.confirmLearningGuide());
     this.playButton.addEventListener('click', () => {
       this.isPlaying = !this.isPlaying;
       this.updatePlayButton();
@@ -188,21 +265,34 @@ export class MoonLab {
       else this.beginJourney();
     });
     this.skipJourney.addEventListener('click', () => this.enterSplit());
-    this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     window.addEventListener('keydown', this.onKeyDown);
   }
 
-  private readonly onWheel = (event: WheelEvent): void => {
-    if (this.mode === 'intro' || this.mode === 'journey') return;
-    event.preventDefault();
-    this.isPlaying = false;
-    this.elapsedDays = wrapCycle(this.elapsedDays + event.deltaY * 0.003);
-    this.updatePlayButton();
-    this.updateUi();
-  };
+  private setupPhaseMarkers(): void {
+    PHASE_STOPS.forEach((stop, index) => {
+      const value = stop.day - 1 + stop.hour / 24;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'phase-marker';
+      button.textContent = `${stop.day}일`;
+      button.title = `${stop.day}일 ${stop.name} 보기`;
+      button.setAttribute('aria-label', `음력 ${stop.day}일 ${stop.name} 보기`);
+      button.dataset.day = String(stop.day);
+      button.style.left = `${(value / Number(this.slider.max)) * 100}%`;
+      button.addEventListener('click', () => {
+        this.isPlaying = false;
+        this.elapsedDays = value;
+        this.updatePlayButton();
+        this.updateSimulation();
+        this.showPhaseGuide(index, false);
+      });
+      this.phaseMarkers.append(button);
+      this.phaseMarkerButtons.push(button);
+    });
+  }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
-    if (this.mode === 'intro' || this.mode === 'journey') return;
+    if (this.guideStep !== 'closed' || this.mode === 'intro' || this.mode === 'journey') return;
     if (event.code !== 'ArrowLeft' && event.code !== 'ArrowRight' && event.code !== 'Space') return;
     if (event.code === 'Space') {
       event.preventDefault();
@@ -227,45 +317,102 @@ export class MoonLab {
     if (!this.pausedForScreenshot) {
       if (this.mode === 'intro') this.updateIntro(delta);
       if ((this.mode === 'sky' || this.mode === 'split') && this.isPlaying) {
-        this.elapsedDays = wrapCycle(this.elapsedDays + delta * PLAYBACK_DAYS_PER_SECOND);
+        this.advancePlayback(delta);
       }
       if (this.mode === 'journey') this.updateJourney(delta);
     }
 
     this.updateSimulation();
+    this.updateSpaceCamera(delta);
     this.render();
     this.publishDiagnostics();
     this.frameId = requestAnimationFrame(this.tick);
   };
 
+  private advancePlayback(delta: number): void {
+    const previous = this.elapsedDays;
+    const cycleLength = Number(this.slider.max);
+    const unwrappedNext = previous + delta * PLAYBACK_DAYS_PER_SECOND;
+    const next = wrapCycle(unwrappedNext);
+    const crossedStop = PHASE_STOPS.findIndex((stop, index) => {
+      if (this.automaticStopsShown.has(index)) return false;
+      const value = stop.day - 1 + stop.hour / 24;
+      if (unwrappedNext < cycleLength) return value > previous && value <= unwrappedNext;
+      return value > previous || value <= next;
+    });
+    if (crossedStop < 0) {
+      this.elapsedDays = next;
+      return;
+    }
+    const stop = PHASE_STOPS[crossedStop];
+    this.elapsedDays = stop.day - 1 + stop.hour / 24;
+    this.isPlaying = false;
+    this.showPhaseGuide(crossedStop, true);
+  }
+
+  private showIntroGuide(): void {
+    this.isPlaying = false;
+    this.guideStep = 'intro';
+    this.resumeAfterGuide = false;
+    this.learningGuideVisual.classList.add('is-hidden');
+    this.learningGuideKicker.classList.remove('is-hidden');
+    this.learningGuideKicker.textContent = '달 관찰 안내';
+    this.learningGuideTitle.textContent = '달의 모양이 어떻게 변하는지 관찰해 보자!';
+    this.learningGuideMessage.classList.add('is-hidden');
+    this.learningGuide.classList.remove('is-phase');
+    this.learningGuide.classList.remove('is-hidden');
+    this.learningGuideConfirm.focus();
+  }
+
+  private showPhaseGuide(index: number, resumeAfterConfirm: boolean): void {
+    const stop = PHASE_STOPS[index];
+    if (resumeAfterConfirm) this.automaticStopsShown.add(index);
+    this.isPlaying = false;
+    this.guideStep = 'phase';
+    this.resumeAfterGuide = resumeAfterConfirm;
+    this.learningGuideMoon.src = stop.image;
+    this.learningGuideMoon.alt = `${stop.name}의 실제 달 모습`;
+    this.learningGuideVisual.classList.remove('is-hidden');
+    this.learningGuideKicker.classList.add('is-hidden');
+    this.learningGuideTitle.textContent = `음력 ${stop.day}일 ${stop.name}`;
+    this.learningGuideMessage.classList.add('is-hidden');
+    this.learningGuide.classList.add('is-phase');
+    this.learningGuide.classList.remove('is-hidden');
+    this.updatePlayButton();
+    this.learningGuideConfirm.focus();
+  }
+
+  private confirmLearningGuide(): void {
+    if (this.guideStep === 'intro') {
+      this.automaticStopsShown.clear();
+      this.enterSky();
+      this.elapsedDays = 3 + 6 / 24;
+      this.learningGuide.classList.add('is-hidden');
+      this.guideStep = 'closed';
+      this.resumeAfterGuide = false;
+      this.isPlaying = true;
+      this.updateSimulation();
+      this.updatePlayButton();
+      return;
+    }
+    const shouldResume = this.resumeAfterGuide;
+    this.learningGuide.classList.add('is-hidden');
+    this.guideStep = 'closed';
+    this.resumeAfterGuide = false;
+    this.isPlaying = shouldResume;
+    this.updatePlayButton();
+  }
+
   private updateIntro(delta: number): void {
     this.introElapsed += delta;
-    const first = '안녕? 나는 달이야.';
-    const second = '나는 날짜가 바뀔 때마다 모양이 변하지! 어떻게 변하는지 보여줄까?';
-    const firstStart = 0.6;
-    const firstEnd = firstStart + first.length * 0.085;
-    const secondStart = firstEnd + 0.8;
-    const secondEnd = secondStart + second.length * 0.06;
+    this.startButton.disabled = false;
+    this.startButton.classList.add('is-ready');
 
-    let text = '';
-    if (this.reducedMotion) {
-      text = second;
-    } else if (this.introElapsed >= secondStart) {
-      text = second.slice(0, Math.floor((this.introElapsed - secondStart) / 0.06));
-    } else if (this.introElapsed >= firstStart) {
-      text = first.slice(0, Math.floor((this.introElapsed - firstStart) / 0.085));
-    }
-    if (this.dialogueText.textContent !== text) this.dialogueText.textContent = text;
-
-    const finished = this.reducedMotion || this.introElapsed > secondEnd + 0.2;
-    this.startButton.disabled = !finished;
-    this.startButton.classList.toggle('is-ready', finished);
-
-    const phaseProgress = this.reducedMotion ? 0.48 : THREE.MathUtils.clamp((this.introElapsed - secondStart) / Math.max(0.1, secondEnd - secondStart), 0.04, 0.96);
+    const phaseProgress = this.reducedMotion ? 0.48 : (this.introElapsed % 18) / 18;
     const angle = phaseProgress * Math.PI * 2;
     this.introMoon.light.position.set(Math.sin(angle) * 6, 1.2, -Math.cos(angle) * 6);
     this.introMoon.root.rotation.y = Math.sin(this.introElapsed * 0.7) * 0.035;
-    this.introMoon.root.position.y = Math.sin(this.introElapsed * 1.25) * 0.06 + 0.65;
+    this.introMoon.root.position.y = Math.sin(this.introElapsed * 1.25) * 0.06 - 0.12;
   }
 
   private updateSimulation(): void {
@@ -298,23 +445,46 @@ export class MoonLab {
     const palette = sampleSkyPalette(moment.hour);
     (this.skyBackdrop.material.uniforms.uTop.value as THREE.Color).copy(palette.top);
     (this.skyBackdrop.material.uniforms.uBottom.value as THREE.Color).copy(palette.bottom);
-    this.skyHorizon.material.color.copy(palette.bottom).multiplyScalar(0.38);
+    this.skyHorizon.farMaterial.color.copy(palette.bottom).multiplyScalar(0.55);
+    this.skyHorizon.nearMaterial.color.copy(palette.bottom).multiplyScalar(0.39);
+    this.skyHorizon.baseMaterial.color.copy(palette.bottom).multiplyScalar(0.3);
+    this.skyHorizon.detailMaterial.color.copy(palette.bottom).multiplyScalar(0.24);
     const starsMaterial = this.skyStars.material as THREE.PointsMaterial;
     starsMaterial.opacity = Math.pow(1 - daylight, 1.8) * 0.9;
 
     this.spaceMoon.position.set(spaceMoonX, spaceMoonY, 0);
     this.spaceMoon.rotation.z = orbitAngle + Math.PI;
+    this.observableLitRegion.position.set(spaceMoonX, spaceMoonY, 0);
+    this.currentMoonPosition.set(spaceMoonX, spaceMoonY, 0);
+    this.trackFreeCameraWithMoon(orbitAngle);
+    const sunDirection = this.observableLitRegion.material.uniforms.uSunDirection.value as THREE.Vector3;
+    sunDirection.set(-1, 0, 0);
+    const observerDirection = this.observableLitRegion.material.uniforms.uObserverDirection.value as THREE.Vector3;
+    observerDirection.set(-spaceMoonX, -spaceMoonY, 0).normalize();
+    this.currentSpaceExpectedIllumination = moment.illumination;
+    this.currentSpaceRedIllumination = (1 + sunDirection.dot(observerDirection)) / 2;
     this.moonLabel.position.set(spaceMoonX, spaceMoonY - 0.78, 0.95);
 
     this.earth.rotation.z = observerAngle;
-    this.spaceObserver.position.set(observerX, observerY, 0.82);
-    this.spaceObserver.rotation.z = observerAngle - Math.PI / 2;
-    this.observerLabel.position.set(observerX * 1.48, observerY * 1.48, 1.05);
+    const observerLatitudeRadius = Math.cos(OBSERVER_LATITUDE);
+    this.observerSurfaceNormal.set(
+      Math.cos(observerAngle) * observerLatitudeRadius,
+      Math.sin(observerAngle) * observerLatitudeRadius,
+      Math.sin(OBSERVER_LATITUDE),
+    ).normalize();
+    this.spaceObserver.position.copy(this.observerSurfaceNormal).multiplyScalar(OBSERVER_SURFACE_RADIUS);
+    this.spaceObserver.quaternion.setFromUnitVectors(this.observerLocalUp, this.observerSurfaceNormal);
+    this.currentObserverPosition.copy(this.spaceObserver.position);
+    this.earthLabel.position.copy(this.freeCameraRight).multiplyScalar(-1.16)
+      .addScaledVector(this.freeCameraUp, 0.36);
+    this.observerLabel.position.copy(this.spaceObserver.position)
+      .addScaledVector(this.freeCameraRight, 0.5)
+      .addScaledVector(this.freeCameraUp, 0.26);
     this.observerView.position.set(observerX, observerY, -0.82);
     this.observerView.rotation.z = observerAngle - Math.PI / 2;
-    this.spaceSun.rotation.z = moment.cycleDay * 0.08;
     this.slider.value = String(moment.cycleDay);
     this.updateUi(moment);
+    this.positionSkyPhaseName();
   }
 
   private updateUi(moment = getLunarMoment(this.elapsedDays)): void {
@@ -322,18 +492,40 @@ export class MoonLab {
     this.timeLabel.textContent = formatKoreanTime(moment.hour);
     this.phaseLabel.textContent = moment.phaseName;
     this.phaseLabel.classList.toggle('is-empty', !moment.phaseName);
+    this.skyPhaseName.textContent = moment.phaseName;
+    for (const button of this.phaseMarkerButtons) {
+      button.classList.toggle('is-active', Number(button.dataset.day) === moment.lunarDay);
+    }
+  }
+
+  private positionSkyPhaseName(): void {
+    const phaseName = this.skyPhaseName.textContent?.trim() ?? '';
+    const width = Math.max(1, this.canvas.clientWidth);
+    const height = Math.max(1, this.canvas.clientHeight);
+    const splitDesktop = this.mode === 'split' && width >= 720;
+    const splitMobile = this.mode === 'split' && width < 720;
+    const skyWidth = splitDesktop ? width / 2 : width;
+    const skyHeight = splitMobile ? height / 2 : height;
+    const cameraWidth = this.skyCamera.right - this.skyCamera.left;
+    const cameraHeight = this.skyCamera.top - this.skyCamera.bottom;
+    const x = ((this.skyMoon.root.position.x - this.skyCamera.left) / cameraWidth) * skyWidth;
+    const moonCenterY = ((this.skyCamera.top - this.skyMoon.root.position.y) / cameraHeight) * skyHeight;
+    const moonRadiusPixels = (0.78 / cameraHeight) * skyHeight;
+    const y = moonCenterY + moonRadiusPixels + 14;
+    const onScreen = x > 26 && x < skyWidth - 26 && y > 44 && y < skyHeight - 26;
+    this.skyPhaseName.classList.toggle('is-hidden', !phaseName || !onScreen || this.mode === 'intro' || this.mode === 'journey');
+    this.skyPhaseName.style.left = `${x}px`;
+    this.skyPhaseName.style.top = `${y}px`;
   }
 
   private updateJourney(delta: number): void {
     this.journeyElapsed += delta;
     const duration = this.reducedMotion ? 0.25 : 4.5;
     const t = easeInOutCubic(Math.min(1, this.journeyElapsed / duration));
-    const moonPosition = this.spaceMoon.position;
-    const start = new THREE.Vector3(moonPosition.x * 0.18, moonPosition.y * 0.18, 1.22);
-    const end = new THREE.Vector3(0, 0, 11.5);
-    this.journeyCamera.position.lerpVectors(start, end, t);
-    const target = moonPosition.clone().lerp(new THREE.Vector3(0, 0, 0), t);
-    this.journeyCamera.lookAt(target);
+    this.journeyCamera.position.lerpVectors(this.journeyStartPosition, this.journeyEndPosition, t);
+    this.journeyLookTarget.lerpVectors(this.journeyStartTarget, this.journeyEndTarget, t);
+    this.journeyCamera.up.lerpVectors(this.journeyStartUp, this.freeCameraUp, t).normalize();
+    this.journeyCamera.lookAt(this.journeyLookTarget);
     if (t >= 1) this.enterSplit();
   }
 
@@ -383,6 +575,10 @@ export class MoonLab {
     this.labUi.classList.remove('is-hidden', 'journey-hidden');
     this.splitLabels.classList.add('is-hidden');
     this.guideNote.classList.add('is-hidden');
+    this.observableLitRegion.visible = false;
+    this.spaceGuides.visible = true;
+    this.earth.visible = true;
+    this.viewButton.classList.remove('is-hidden');
     this.skipJourney.classList.add('is-hidden');
     this.viewButton.textContent = '우주에서도 살펴볼까?';
     this.isPlaying = true;
@@ -393,7 +589,21 @@ export class MoonLab {
   private beginJourney(): void {
     this.mode = 'journey';
     this.isPlaying = false;
+    this.observableLitRegion.visible = false;
+    this.spaceGuides.visible = true;
+    this.earth.visible = true;
+    this.viewButton.classList.add('is-hidden');
     this.journeyElapsed = 0;
+    this.alignFreeCameraToMoon();
+    this.journeyStartPosition.copy(this.currentMoonPosition)
+      .addScaledVector(this.freeCameraDirection, 2.1)
+      .addScaledVector(this.freeCameraUp, 0.25);
+    this.journeyEndPosition.copy(this.freeCameraDirection)
+      .multiplyScalar(this.orbitRadius)
+      .add(this.orbitTarget);
+    this.journeyStartTarget.copy(this.currentMoonPosition);
+    this.journeyEndTarget.copy(this.currentMoonPosition).multiplyScalar(AUTO_CAMERA_LOOK_AHEAD);
+    this.journeyStartUp.copy(this.journeyCamera.up).normalize();
     this.labUi.classList.add('journey-hidden');
     this.skipJourney.classList.remove('is-hidden');
     this.updateJourney(0);
@@ -404,9 +614,13 @@ export class MoonLab {
     this.labUi.classList.remove('journey-hidden');
     this.splitLabels.classList.remove('is-hidden');
     this.guideNote.classList.remove('is-hidden');
-    this.guideNote.textContent = '빛 받은 쪽만 밝아요 · 시야 안의 달만 하늘에 보여요';
+    this.viewButton.classList.remove('is-hidden');
+    this.setSpaceViewMode('free');
+    this.resetSpaceView();
+    this.snapSpaceCameraToAutoFrame();
+    this.observableLitRegion.visible = true;
     this.skipJourney.classList.add('is-hidden');
-    this.viewButton.textContent = '하늘만 볼까?';
+    this.viewButton.textContent = '하늘만 보기';
     this.isPlaying = true;
     this.updatePlayButton();
     this.resize();
@@ -415,6 +629,111 @@ export class MoonLab {
   private updatePlayButton(): void {
     this.playButton.textContent = this.isPlaying ? 'Ⅱ' : '▶';
     this.playButton.setAttribute('aria-label', this.isPlaying ? '시간 일시정지' : '시간 재생');
+  }
+
+  private setSpaceViewMode(mode: SpaceViewMode): void {
+    this.spaceViewMode = mode;
+    const observing = mode === 'observer';
+    this.observerHorizon.visible = observing;
+    if (observing) {
+      this.spaceGuides.visible = false;
+      this.earth.visible = false;
+    } else {
+      this.spaceGuides.visible = true;
+      this.earth.visible = true;
+    }
+    this.guideNote.textContent = observing
+      ? '지구에서 보는 방향으로 달의 밝은 모양을 살펴보세요.'
+      : '달에서 밝은 부분이 우리가 볼 수 있는 달의 모습이에요.';
+  }
+
+  private resetSpaceView(): void {
+    this.setSpaceViewMode('free');
+    this.alignFreeCameraToMoon();
+    this.orbitRadius = 14;
+    this.observerCameraBackoff = INITIAL_OBSERVER_CAMERA_BACKOFF;
+  }
+
+  private snapSpaceCameraToAutoFrame(): void {
+    this.desiredCameraPosition.copy(this.freeCameraDirection)
+      .multiplyScalar(this.orbitRadius)
+      .add(this.orbitTarget);
+    this.desiredLookTarget.copy(this.currentMoonPosition).multiplyScalar(AUTO_CAMERA_LOOK_AHEAD);
+    this.spaceCamera.position.copy(this.desiredCameraPosition);
+    this.spaceLookTarget.copy(this.desiredLookTarget);
+    this.spaceCamera.up.copy(this.freeCameraUp);
+    this.spaceCamera.fov = 43;
+    this.spaceCamera.updateProjectionMatrix();
+    this.spaceCamera.lookAt(this.spaceLookTarget);
+  }
+
+  private alignFreeCameraToMoon(): void {
+    if (this.currentMoonPosition.lengthSq() < 0.001) {
+      this.setFreeCameraFromAngles(0, INITIAL_ORBIT_PITCH);
+      return;
+    }
+    this.autoCameraMoonDirection.copy(this.currentMoonPosition).normalize();
+    this.freeCameraDirection.copy(this.autoCameraMoonDirection).multiplyScalar(-Math.cos(AUTO_CAMERA_ELEVATION));
+    this.freeCameraDirection.addScaledVector(this.autoCameraWorldUp, Math.sin(AUTO_CAMERA_ELEVATION)).normalize();
+    this.freeCameraUp.copy(this.autoCameraMoonDirection);
+    this.freeCameraUp.addScaledVector(
+      this.freeCameraDirection,
+      -this.freeCameraUp.dot(this.freeCameraDirection),
+    ).normalize();
+    this.freeCameraRight.crossVectors(this.freeCameraUp, this.freeCameraDirection).normalize();
+    this.lastTrackedMoonAngle = Math.atan2(this.currentMoonPosition.y, this.currentMoonPosition.x);
+  }
+
+  private trackFreeCameraWithMoon(orbitAngle: number): void {
+    if (this.lastTrackedMoonAngle === null) {
+      this.lastTrackedMoonAngle = orbitAngle;
+      return;
+    }
+    const angleDelta = Math.atan2(
+      Math.sin(orbitAngle - this.lastTrackedMoonAngle),
+      Math.cos(orbitAngle - this.lastTrackedMoonAngle),
+    );
+    this.lastTrackedMoonAngle = orbitAngle;
+    if (Math.abs(angleDelta) < 1e-8) return;
+    this.orbitRotation.setFromAxisAngle(this.autoCameraWorldUp, angleDelta);
+    this.freeCameraDirection.applyQuaternion(this.orbitRotation).normalize();
+    this.freeCameraUp.applyQuaternion(this.orbitRotation).normalize();
+    this.freeCameraRight.crossVectors(this.freeCameraUp, this.freeCameraDirection).normalize();
+  }
+
+  private setFreeCameraFromAngles(azimuth: number, pitch: number): void {
+    const cosPitch = Math.cos(pitch);
+    const sinPitch = Math.sin(pitch);
+    const sinAzimuth = Math.sin(azimuth);
+    const cosAzimuth = Math.cos(azimuth);
+    this.freeCameraDirection.set(sinAzimuth * cosPitch, sinPitch, cosAzimuth * cosPitch).normalize();
+    this.freeCameraUp.set(-sinAzimuth * sinPitch, cosPitch, -cosAzimuth * sinPitch).normalize();
+    this.freeCameraRight.crossVectors(this.freeCameraUp, this.freeCameraDirection).normalize();
+  }
+
+  private updateSpaceCamera(delta: number): void {
+    if (this.mode !== 'split') return;
+    if (this.spaceViewMode === 'observer') {
+      this.observerCameraAxis.copy(this.currentMoonPosition).normalize();
+      this.desiredCameraPosition.copy(this.observerCameraAxis).multiplyScalar(-this.observerCameraBackoff);
+      this.desiredLookTarget.copy(this.currentMoonPosition);
+      this.spaceCamera.up.set(0, 0, 1);
+    } else {
+      this.desiredCameraPosition.copy(this.freeCameraDirection).multiplyScalar(this.orbitRadius).add(this.orbitTarget);
+      this.desiredLookTarget.copy(this.currentMoonPosition).multiplyScalar(AUTO_CAMERA_LOOK_AHEAD);
+      this.spaceCamera.up.copy(this.freeCameraUp);
+    }
+    const response = this.reducedMotion || this.spaceViewMode === 'observer' ? 1 : 1 - Math.exp(-delta * 7.5);
+    this.spaceCamera.position.lerp(this.desiredCameraPosition, response);
+    this.spaceLookTarget.lerp(this.desiredLookTarget, response);
+    this.spaceCamera.fov = THREE.MathUtils.lerp(this.spaceCamera.fov, this.spaceViewMode === 'observer' ? 56 : 43, response);
+    this.spaceCamera.updateProjectionMatrix();
+    this.spaceCamera.lookAt(this.spaceLookTarget);
+    if (this.spaceViewMode === 'free') {
+      const distanceFromEarth = this.spaceCamera.position.length();
+      this.earth.visible = distanceFromEarth > EARTH_RADIUS * 1.5;
+      this.spaceGuides.visible = distanceFromEarth > 2;
+    }
   }
 
   private resize(): void {
@@ -428,7 +747,11 @@ export class MoonLab {
     this.journeyCamera.aspect = width / height;
     this.journeyCamera.updateProjectionMatrix();
     this.updateOrtho(this.skyCamera, this.mode === 'split' && width >= 720 ? width / 2 : width, this.mode === 'split' && width < 720 ? height / 2 : height, 4.5);
-    this.updateOrtho(this.spaceCamera, this.mode === 'split' && width >= 720 ? width / 2 : width, this.mode === 'split' && width < 720 ? height / 2 : height, 6.25);
+    const spaceWidth = this.mode === 'split' && width >= 720 ? width / 2 : width;
+    const spaceHeight = this.mode === 'split' && width < 720 ? height / 2 : height;
+    this.spaceCamera.aspect = spaceWidth / Math.max(1, spaceHeight);
+    this.spaceCamera.updateProjectionMatrix();
+    this.positionSkyPhaseName();
   }
 
   private updateOrtho(camera: THREE.OrthographicCamera, width: number, height: number, halfHeight: number): void {
@@ -442,11 +765,37 @@ export class MoonLab {
 
   private publishDiagnostics(): void {
     const info = this.renderer.info;
+    const cameraHorizontalLength = Math.hypot(this.freeCameraDirection.x, this.freeCameraDirection.y);
+    const moonHorizontalLength = Math.hypot(this.currentMoonPosition.x, this.currentMoonPosition.y);
+    const autoFrameAlignment = cameraHorizontalLength > 0 && moonHorizontalLength > 0
+      ? -(this.freeCameraDirection.x * this.currentMoonPosition.x + this.freeCameraDirection.y * this.currentMoonPosition.y)
+        / (cameraHorizontalLength * moonHorizontalLength)
+      : 0;
     window.__THREE_GAME_DIAGNOSTICS__ = {
       frame: this.frame,
       elapsedDays: this.elapsedDays,
       mode: this.mode,
       isPlaying: this.isPlaying,
+      spaceCamera: {
+        viewMode: this.spaceViewMode,
+        position: this.spaceCamera.position.toArray(),
+        target: this.spaceLookTarget.toArray(),
+        orbitRadius: this.orbitRadius,
+        orbitAzimuth: Math.atan2(this.freeCameraDirection.x, this.freeCameraDirection.z),
+        orbitPitch: Math.asin(THREE.MathUtils.clamp(this.freeCameraDirection.y, -1, 1)),
+        cameraDirection: this.freeCameraDirection.toArray(),
+        moonPosition: this.currentMoonPosition.toArray(),
+        autoFrameAlignment,
+        observerCameraBackoff: this.observerCameraBackoff,
+        cameraUp: this.spaceCamera.up.toArray(),
+        redRegionVisible: this.observableLitRegion.visible,
+        observerHorizonVisible: this.observerHorizon.visible,
+        observerSurfaceGap: this.currentObserverPosition.length() - OBSERVER_FOOT_OFFSET - EARTH_RADIUS,
+      },
+      spaceLighting: {
+        expectedIllumination: this.currentSpaceExpectedIllumination,
+        redIllumination: this.currentSpaceRedIllumination,
+      },
       renderer: {
         calls: info.render.calls,
         triangles: info.render.triangles,
@@ -470,15 +819,34 @@ export class MoonLab {
           this.mode = 'intro';
           this.introUi.classList.remove('is-hidden');
           this.labUi.classList.add('is-hidden');
-        } else if (name === 'split') {
+        } else if (
+          name === 'split'
+          || name === 'split-observer'
+          || name === 'split-observer-quarter'
+          || name === 'split-angled'
+          || name === 'split-day16'
+          || name === 'split-day21'
+          || name === 'split-day22'
+          || name === 'split-day27'
+        ) {
           this.enterSky();
           this.enterSplit();
+          if (name === 'split-observer' || name === 'split-observer-quarter') this.setSpaceViewMode('observer');
+          if (name === 'split-observer-quarter') this.elapsedDays = 6 + 15.75 / 24;
+          if (name === 'split-day16') this.elapsedDays = 15 + 1.8 / 24;
+          if (name === 'split-day21') this.elapsedDays = 20 + 6 / 24;
+          if (name === 'split-day22') this.elapsedDays = 21 + 3 / 24;
+          if (name === 'split-day27') this.elapsedDays = 26 + 10.7 / 24;
+          if (name === 'split-angled') {
+            this.setFreeCameraFromAngles(0.72, 0.51);
+          }
           this.isPlaying = false;
           this.updatePlayButton();
           this.updateSimulation();
         }
         else {
           this.enterSky();
+          if (name === 'sky-day7') this.elapsedDays = 6 + 19 / 24;
           if (name === 'sky-dawn') this.elapsedDays = 7 + 5.5 / 24;
           if (name === 'sky-morning') this.elapsedDays = 7 + 9 / 24;
           if (name === 'sky-evening') this.elapsedDays = 7 + 19 / 24;
@@ -491,6 +859,13 @@ export class MoonLab {
         }
       },
       setTime: (days) => { this.elapsedDays = wrapCycle(days); this.updateSimulation(); },
+      setSpaceView: (mode) => this.setSpaceViewMode(mode),
+      setSpaceOrbit: (azimuth, pitch, radius = this.orbitRadius) => {
+        this.setSpaceViewMode('free');
+        this.setFreeCameraFromAngles(azimuth, pitch);
+        this.lastTrackedMoonAngle = Math.atan2(this.currentMoonPosition.y, this.currentMoonPosition.x);
+        this.orbitRadius = THREE.MathUtils.clamp(radius, FREE_ORBIT_MIN_RADIUS, FREE_ORBIT_MAX_RADIUS);
+      },
       setPausedForScreenshot: (paused) => { this.pausedForScreenshot = paused; },
       setReducedMotion: (enabled) => { this.reducedMotion = enabled; },
       hideDebugUi: () => undefined,
@@ -605,15 +980,86 @@ function createSkyBackdrop(): SkyBackdrop {
   return { mesh, material };
 }
 
-function createSkyHorizon(): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> {
-  const height = 12;
-  const geometry = new THREE.PlaneGeometry(40, height);
-  const material = new THREE.MeshBasicMaterial({ color: '#03080d', toneMapped: false });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(0, SKY_HORIZON_Y - height / 2, 1.2);
-  mesh.renderOrder = 10;
-  mesh.frustumCulled = false;
+function createSkyHorizon(): SkyLandscape {
+  const group = new THREE.Group();
+  const baseMaterial = new THREE.MeshBasicMaterial({ color: '#03080d', toneMapped: false });
+  const farMaterial = new THREE.MeshBasicMaterial({ color: '#0a1721', toneMapped: false });
+  const nearMaterial = new THREE.MeshBasicMaterial({ color: '#061019', toneMapped: false });
+  const detailMaterial = new THREE.MeshBasicMaterial({ color: '#03090f', toneMapped: false });
+
+  const base = new THREE.Mesh(new THREE.PlaneGeometry(40, 12), baseMaterial);
+  base.position.set(0, SKY_HORIZON_Y - 6.22, 1.2);
+
+  const farRidge = createLandscapeShape([
+    [-20, -0.1], [-17.8, 0.17], [-15.5, 0.08], [-13.1, 0.39], [-10.8, 0.16],
+    [-8.4, 0.52], [-5.9, 0.21], [-3.4, 0.46], [-0.8, 0.18], [1.8, 0.38],
+    [4.2, 0.15], [6.8, 0.48], [9.2, 0.2], [11.8, 0.42], [14.4, 0.12],
+    [17.1, 0.36], [20, 0.08],
+  ], farMaterial, 1.28);
+
+  const nearRidge = createLandscapeShape([
+    [-20, -0.22], [-17.6, 0.04], [-15.2, -0.08], [-12.7, 0.18], [-10.1, -0.02],
+    [-7.5, 0.23], [-4.8, -0.04], [-2.1, 0.2], [0.6, -0.08], [3.3, 0.16],
+    [6.1, -0.05], [8.8, 0.22], [11.5, -0.03], [14.2, 0.2], [17, -0.06], [20, 0.12],
+  ], nearMaterial, 1.38);
+
+  const details = new THREE.Group();
+  const treeData = [[-14.7, 0.12, 0.22], [-11.4, 0.17, 0.18], [-5.1, 0.13, 0.24], [4.9, 0.12, 0.2], [10.7, 0.16, 0.23], [15.2, 0.1, 0.18]];
+  for (const [x, ridgeOffset, scale] of treeData) {
+    const tree = createDistantTree(detailMaterial, scale);
+    tree.position.set(x, SKY_HORIZON_Y + ridgeOffset, 1.49);
+    details.add(tree);
+  }
+  const buildingData = [[-8.8, 0.12, 0.42, 0.22], [7.7, 0.08, 0.48, 0.25], [12.8, 0.05, 0.34, 0.18]];
+  for (const [x, ridgeOffset, width, height] of buildingData) {
+    const building = new THREE.Mesh(new THREE.PlaneGeometry(width, height), detailMaterial);
+    building.position.set(x, SKY_HORIZON_Y + ridgeOffset + height / 2, 1.48);
+    details.add(building);
+  }
+
+  group.add(base, farRidge, nearRidge, details);
+  group.traverse((object) => {
+    if (object instanceof THREE.Mesh) {
+      object.renderOrder = 10;
+      object.frustumCulled = false;
+    }
+  });
+  return { group, baseMaterial, farMaterial, nearMaterial, detailMaterial };
+}
+
+function createLandscapeShape(
+  ridge: number[][],
+  material: THREE.MeshBasicMaterial,
+  z: number,
+): THREE.Mesh<THREE.ShapeGeometry, THREE.MeshBasicMaterial> {
+  const shape = new THREE.Shape();
+  shape.moveTo(ridge[0][0], SKY_HORIZON_Y + ridge[0][1]);
+  for (let index = 1; index < ridge.length; index += 1) {
+    const previous = ridge[index - 1];
+    const current = ridge[index];
+    const midX = (previous[0] + current[0]) / 2;
+    const midY = SKY_HORIZON_Y + (previous[1] + current[1]) / 2;
+    shape.quadraticCurveTo(previous[0], SKY_HORIZON_Y + previous[1], midX, midY);
+  }
+  const last = ridge[ridge.length - 1];
+  shape.lineTo(last[0], SKY_HORIZON_Y + last[1]);
+  shape.lineTo(last[0], -9);
+  shape.lineTo(ridge[0][0], -9);
+  shape.closePath();
+  const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape, 12), material);
+  mesh.position.z = z;
   return mesh;
+}
+
+function createDistantTree(material: THREE.MeshBasicMaterial, scale: number): THREE.Group {
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.PlaneGeometry(scale * 0.18, scale * 0.8), material);
+  trunk.position.y = scale * 0.4;
+  const crown = new THREE.Mesh(new THREE.CircleGeometry(scale * 0.62, 7), material);
+  crown.position.y = scale * 0.98;
+  crown.scale.y = 1.18;
+  group.add(trunk, crown);
+  return group;
 }
 
 function createMoonTexture(): THREE.CanvasTexture {
@@ -665,16 +1111,6 @@ function createEarth(): THREE.Mesh {
   );
 }
 
-function addMoonRotationMarker(moon: THREE.Mesh): void {
-  const marker = new THREE.Mesh(
-    new THREE.CircleGeometry(0.075, 20),
-    new THREE.MeshBasicMaterial({ color: '#69675f', transparent: true, opacity: 0.86, depthWrite: false }),
-  );
-  marker.name = 'moonRotationMarker';
-  marker.position.set(0.18, 0.12, 0.445);
-  moon.add(marker);
-}
-
 function createSpaceObserver(): THREE.Group {
   const root = new THREE.Group();
   root.name = 'earthObserver';
@@ -718,10 +1154,11 @@ function createSpaceObserver(): THREE.Group {
   }
 
   const locationRing = new THREE.Mesh(
-    new THREE.RingGeometry(0.15, 0.18, 28),
-    new THREE.MeshBasicMaterial({ color: '#7edcff', transparent: true, opacity: 0.76, side: THREE.DoubleSide, toneMapped: false }),
+    new THREE.RingGeometry(0.1, 0.125, 28),
+    new THREE.MeshBasicMaterial({ color: '#7edcff', transparent: true, opacity: 0.58, side: THREE.DoubleSide, toneMapped: false }),
   );
-  locationRing.position.y = 0.13;
+  locationRing.position.y = 0.004;
+  locationRing.rotation.x = Math.PI / 2;
   locationRing.renderOrder = 20;
   root.add(locationRing);
   return root;
@@ -773,6 +1210,42 @@ function createObserverView(): THREE.Group {
   return root;
 }
 
+function createObservableLitRegion(): THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial> {
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uSunDirection: { value: new THREE.Vector3(-1, 0, 0) },
+      uObserverDirection: { value: new THREE.Vector3(1, 0, 0) },
+    },
+    vertexShader: `
+      varying vec3 vWorldNormal;
+      void main() {
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uSunDirection;
+      uniform vec3 uObserverDirection;
+      varying vec3 vWorldNormal;
+      void main() {
+        vec3 normalDirection = normalize(vWorldNormal);
+        float receivesSunlight = smoothstep(-0.025, 0.035, dot(normalDirection, normalize(uSunDirection)));
+        float facesObserver = smoothstep(-0.025, 0.035, dot(normalDirection, normalize(uObserverDirection)));
+        float overlap = receivesSunlight * facesObserver;
+        if (overlap < 0.02) discard;
+        gl_FragColor = vec4(1.0, 0.08, 0.055, overlap * 0.18);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.468, 64, 48), material);
+  mesh.name = 'observableLitRegion';
+  mesh.renderOrder = 18;
+  return mesh;
+}
+
 function createStars(count: number, seed: number): THREE.Points {
   const random = seededRandom(seed);
   const positions: number[] = [];
@@ -784,70 +1257,144 @@ function createStars(count: number, seed: number): THREE.Points {
   return new THREE.Points(geometry, new THREE.PointsMaterial({ color: '#f8f4de', size: 0.045, transparent: true, opacity: 0.88, sizeAttenuation: true }));
 }
 
-function createSunDisc(radius: number): THREE.Group {
-  const group = new THREE.Group();
-  group.add(new THREE.Mesh(new THREE.CircleGeometry(radius, 48), new THREE.MeshBasicMaterial({ color: '#fff0a4' })));
-  const halo = new THREE.Mesh(new THREE.RingGeometry(radius * 1.12, radius * 1.8, 48), new THREE.MeshBasicMaterial({ color: '#ffd57a', transparent: true, opacity: 0.18, side: THREE.DoubleSide }));
-  group.add(halo);
-  return group;
+function createSpaceStars(count: number, seed: number): THREE.Points {
+  const random = seededRandom(seed);
+  const positions: number[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const direction = new THREE.Vector3(random() - 0.5, random() - 0.5, random() - 0.5).normalize();
+    const radius = 24 + random() * 12;
+    positions.push(direction.x * radius, direction.y * radius, direction.z * radius);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.Points(geometry, new THREE.PointsMaterial({ color: '#f8f4de', size: 0.085, transparent: true, opacity: 0.72, sizeAttenuation: true }));
 }
 
 function createSpaceLabel(text: string, background: string): THREE.Sprite {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 96;
+  const font = '700 42px "Noto Sans KR", sans-serif';
+  const measurementContext = canvas.getContext('2d');
+  if (!measurementContext) throw new Error('Canvas 2D context is unavailable.');
+  measurementContext.font = font;
+  const textWidth = Math.ceil(measurementContext.measureText(text).width);
+  const horizontalPadding = 8;
+  const verticalPadding = 5;
+  canvas.width = textWidth + horizontalPadding * 2 + 6;
+  canvas.height = 42 + verticalPadding * 2 + 6;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Canvas 2D context is unavailable.');
 
   context.fillStyle = background;
   context.beginPath();
-  context.roundRect(10, 10, 236, 76, 30);
+  context.roundRect(2, 2, canvas.width - 4, canvas.height - 4, 13);
   context.fill();
   context.strokeStyle = 'rgba(255,255,255,0.42)';
   context.lineWidth = 3;
   context.stroke();
   context.fillStyle = '#fffdf2';
-  context.font = '700 42px "Noto Sans KR", sans-serif';
+  context.font = font;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  context.fillText(text, 128, 50);
+  context.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.minFilter = THREE.LinearFilter;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, toneMapped: false }));
-  sprite.scale.set(0.92, 0.345, 1);
+  const labelHeight = 0.345;
+  sprite.scale.set(labelHeight * (canvas.width / canvas.height), labelHeight, 1);
   sprite.renderOrder = 30;
   return sprite;
 }
 
 function createSpaceSun(): THREE.Group {
-  const group = createSunDisc(0.72);
+  const group = new THREE.Group();
   group.name = 'spaceSun';
+  group.add(new THREE.Mesh(
+    new THREE.SphereGeometry(0.72, 40, 28),
+    new THREE.MeshBasicMaterial({ color: '#fff0a4', toneMapped: false }),
+  ));
 
-  const rayPoints: THREE.Vector3[] = [];
-  const rayCount = 40;
-  for (let index = 0; index < rayCount; index += 1) {
-    const angle = (index / rayCount) * Math.PI * 2;
-    const innerRadius = 0.92 + (index % 3) * 0.04;
-    const outerRadius = 7.8 + (index % 5) * 0.28;
-    rayPoints.push(
-      new THREE.Vector3(Math.cos(angle) * innerRadius, Math.sin(angle) * innerRadius, -0.9),
-      new THREE.Vector3(Math.cos(angle) * outerRadius, Math.sin(angle) * outerRadius, -0.9),
-    );
-  }
-  const rays = new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints(rayPoints),
-    new THREE.LineBasicMaterial({ color: '#f6d675', transparent: true, opacity: 0.16, depthWrite: false }),
+  const haloTexture = createSunHaloTexture();
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture, transparent: true, depthWrite: false, toneMapped: false }));
+  halo.scale.set(2.7, 2.7, 1);
+  halo.renderOrder = -2;
+  group.add(halo);
+
+  return group;
+}
+
+function createSunHaloTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Canvas 2D context is unavailable.');
+  const gradient = context.createRadialGradient(64, 64, 18, 64, 64, 64);
+  gradient.addColorStop(0, 'rgba(255, 225, 132, 0.46)');
+  gradient.addColorStop(0.45, 'rgba(246, 200, 92, 0.18)');
+  gradient.addColorStop(1, 'rgba(246, 200, 92, 0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 128, 128);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function createObserverEarthHorizon(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'observerEarthHorizon';
+
+  const atmosphere = new THREE.Mesh(
+    new THREE.CircleGeometry(4.32, 128),
+    new THREE.MeshBasicMaterial({
+      color: '#66d6ff',
+      transparent: true,
+      opacity: 0.38,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }),
   );
-  rays.name = 'radialSunlight';
-  group.add(rays);
+  atmosphere.position.set(0, -6.78, -6.55);
+  atmosphere.scale.x = 1.82;
+  atmosphere.renderOrder = 98;
+  atmosphere.frustumCulled = false;
 
-  for (const scale of [1.35, 1.62]) {
-    const ring = new THREE.Mesh(new THREE.RingGeometry(0.72 * scale, 0.76 * scale, 48), new THREE.MeshBasicMaterial({ color: '#f6c85c', transparent: true, opacity: 0.12, side: THREE.DoubleSide }));
-    group.add(ring);
-  }
-  group.add(new THREE.PointLight('#fff3c4', 3.4, 0, 0));
+  const earth = new THREE.Mesh(
+    new THREE.CircleGeometry(4.2, 128),
+    new THREE.MeshBasicMaterial({
+      color: '#123d61',
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }),
+  );
+  earth.position.set(0, -6.82, -6.5);
+  earth.scale.x = 1.82;
+  earth.renderOrder = 99;
+  earth.frustumCulled = false;
+
+  const groundShade = new THREE.Mesh(
+    new THREE.CircleGeometry(4.08, 128),
+    new THREE.MeshBasicMaterial({
+      color: '#071827',
+      transparent: true,
+      opacity: 0.5,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    }),
+  );
+  groundShade.position.set(0, -6.96, -6.45);
+  groundShade.scale.x = 1.82;
+  groundShade.renderOrder = 100;
+  groundShade.frustumCulled = false;
+
+  group.add(atmosphere, earth, groundShade);
   return group;
 }
 

@@ -11,14 +11,26 @@
   <body>
     <main id="app">
       <canvas id="game-canvas" aria-label="달의 모양과 움직임을 보여 주는 관찰 화면"></canvas>
-      <section id="intro" class="screen-layer" aria-labelledby="intro-title">
-        <h1 id="intro-title" class="eyebrow">달 관찰 실험실</h1>
-        <div class="dialogue" aria-live="polite">
-          <p id="dialogue-text"></p><span class="typing-cursor" aria-hidden="true"></span>
-        </div>
-        <button id="start-button" class="primary-button" type="button" disabled>
-          달의 움직임 관찰하기 <span aria-hidden="true">→</span>
+      <nav id="global-actions" class="global-actions" aria-label="화면 메뉴">
+        <button id="home-button" class="global-action-button is-hidden" type="button">메인화면으로</button>
+        <button id="fullscreen-button" class="global-action-button fullscreen-button" type="button">
+          <svg class="fullscreen-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+          </svg>
+          <span id="fullscreen-label">전체화면</span>
         </button>
+        <p id="fullscreen-status" class="fullscreen-status is-hidden" role="status" aria-live="polite"></p>
+      </nav>
+      <section id="intro" class="screen-layer" aria-labelledby="intro-title">
+        <h1 id="intro-title" class="eyebrow">달의 모양을 여러 날 동안 관찰해 볼까?</h1>
+        <div class="intro-mode-actions" aria-label="활동 선택">
+          <button id="start-button" class="primary-button" type="button" disabled>
+            <span class="mode-number">1</span> 학습 시작하기
+          </button>
+          <button id="game-button" class="primary-button game-entry-button" type="button">
+            <span class="mode-number">2</span> 게임 시작하기
+          </button>
+        </div>
       </section>
       <section id="lab-ui" class="screen-layer is-hidden" aria-label="달 관찰 조작 도구">
         <header class="date-display" aria-live="polite">
@@ -35,8 +47,10 @@
         <div class="top-actions">
           <button id="view-button" class="text-button" type="button">우주에서도 살펴볼까?</button>
         </div>
+        <div id="sky-phase-name" class="sky-phase-name is-hidden" aria-live="polite"></div>
         <div class="timeline-panel">
           <button id="play-button" class="icon-button" type="button" aria-label="시간 일시정지">Ⅱ</button>
+          <div id="phase-markers" class="phase-markers" role="group" aria-label="대표적인 달의 모양 날짜"></div>
           <label class="timeline-label" for="time-slider">
             <span class="sr-only">음력 날짜와 시간</span>
             <input id="time-slider" type="range" min="0" max="29.53059" step="0.002" value="2.7917" />
@@ -45,6 +59,67 @@
         </div>
       </section>
       <button id="skip-journey" class="skip-button is-hidden" type="button">건너뛰기</button>
+      <div id="learning-guide" class="learning-guide is-hidden" role="dialog" aria-modal="true" aria-labelledby="learning-guide-title" aria-describedby="learning-guide-message">
+        <section class="learning-guide-card">
+          <div id="learning-guide-visual" class="learning-guide-visual is-hidden" aria-hidden="true">
+            <img id="learning-guide-moon" class="learning-guide-moon" alt="" />
+          </div>
+          <small id="learning-guide-kicker" class="learning-guide-kicker">달 관찰 안내</small>
+          <h2 id="learning-guide-title">달의 모양이 어떻게 변하는지 관찰해 보자!</h2>
+          <p id="learning-guide-message" class="is-hidden"></p>
+          <button id="learning-guide-confirm" class="learning-guide-confirm" type="button">확인</button>
+        </section>
+      </div>
+      <section id="arcade-shell" class="arcade-shell is-hidden" aria-label="달 모양 찾기 게임">
+        <div id="arcade-player-gate" class="arcade-player-gate">
+          <form id="arcade-player-form" class="player-form">
+            <small>MOON ARCADE</small>
+            <h2>도전자 정보를 입력하세요</h2>
+            <label>학교명<input id="arcade-school" name="school" maxlength="30" autocomplete="organization" required /></label>
+            <div class="student-number-grid">
+              <label>학년<input id="arcade-grade" name="grade" type="number" min="1" max="6" inputmode="numeric" required /></label>
+              <label>반<input id="arcade-class" name="classNo" type="number" min="1" max="30" inputmode="numeric" required /></label>
+              <label>번호<input id="arcade-student-no" name="studentNo" type="number" min="1" max="99" inputmode="numeric" required /></label>
+            </div>
+            <p id="arcade-player-status">입력한 정보는 랭킹에 공개됩니다.</p>
+            <button id="arcade-start-run" type="submit">게임 시작!</button>
+            <button id="arcade-clear-profile" class="secondary-form-button" type="button">다른 정보로 입력</button>
+          </form>
+        </div>
+        <div id="arcade-canvas" class="arcade-canvas"></div>
+        <header class="arcade-hud">
+          <div class="arcade-hp" aria-label="남은 체력">
+            <span class="hud-label">HP</span><span id="arcade-hearts" class="arcade-hearts">♥ ♥ ♥</span>
+          </div>
+          <div class="arcade-target" aria-live="polite">
+            <span class="hud-label">찾아라!</span>
+            <strong id="arcade-target-name">초승달</strong>
+          </div>
+          <div class="arcade-score">
+            <span class="hud-label">점수</span><strong id="arcade-score-value">0</strong>
+            <span id="arcade-combo" class="arcade-combo">COMBO ×1</span>
+          </div>
+        </header>
+        <button id="arcade-back" class="arcade-back" type="button">← 처음으로</button>
+        <div id="arcade-stage-card" class="arcade-stage-card" aria-live="assertive">
+          <small id="arcade-stage-label">1단계</small>
+          <strong id="arcade-stage-name">초승달을 찾아라!</strong>
+        </div>
+        <div id="arcade-game-over" class="arcade-game-over is-hidden" role="dialog" aria-modal="true" aria-labelledby="arcade-game-over-title">
+          <div class="game-over-panel">
+            <small>GAME OVER</small>
+            <h2 id="arcade-game-over-title">달 탐험 종료!</h2>
+            <p>최종 점수 <strong id="arcade-final-score">0</strong></p>
+            <p>최고 콤보 <strong id="arcade-best-combo">×1</strong></p>
+            <p id="arcade-current-rank" class="current-rank">랭킹 계산 중…</p>
+            <button id="arcade-retry" type="button">다시 하기</button>
+          </div>
+          <section class="leaderboard-panel" aria-label="상위 100위 랭킹">
+            <div class="leaderboard-heading"><div><small>TOP 100</small><h3>달 탐험 랭킹</h3></div><span id="arcade-ranking-source"></span></div>
+            <ol id="arcade-ranking-list" class="ranking-list"></ol>
+          </section>
+        </div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

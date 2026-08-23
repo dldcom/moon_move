@@ -12,6 +12,8 @@
     "inspect:canvas": "node scripts/inspect-threejs-canvas.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.3",
+    "phaser": "^4.2.1",
     "three": "^0.184.0"
   },
   "devDependencies": {
@@ -20,6 +22,7 @@
     "@types/pngjs": "^6.0.5",
     "@types/three": "^0.184.1",
     "pngjs": "^7.0.0",
+    "supabase": "^2.115.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.13"
   }
