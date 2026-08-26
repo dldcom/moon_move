@@ -22,7 +22,7 @@ export type RunSummary = {
 export class ArcadeState {
   readonly stageDuration = 18;
   readonly maxHp = 3;
-  readonly lifeChance = 0.15;
+  readonly lifeChance = 0.01;
   hp = this.maxHp;
   score = 0;
   combo = 0;
