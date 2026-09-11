@@ -5,24 +5,25 @@ const cors = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-client-info',
 };
+
 const MOON_MOVE_GAME_ID = 'moon-move';
 const MOON_MOVE_NICKNAMES = new Set([
-  '달토끼',
-  '별가루',
-  '초승달',
-  '보름달',
-  '우주비행사',
-  '혜성',
-  '밤구름',
-  '은하수',
-  '달빛탐험가',
-  '별똥별',
-  '우주고양이',
-  '크레이터탐험대',
+  '\uB2EC\uD1A0\uB07C',
+  '\uBCC4\uAC00\uB8E8',
+  '\uCD08\uC2B9\uB2EC',
+  '\uBCF4\uB984\uB2EC',
+  '\uC6B0\uC8FC\uBE44\uD589\uC0AC',
+  '\uD61C\uC131',
+  '\uBC24\uAD6C\uB984',
+  '\uC740\uD558\uC218',
+  '\uB2EC\uBE5B\uD0D0\uD5D8\uAC00',
+  '\uBCC4\uB625\uBCC4',
+  '\uC6B0\uC8FC\uACE0\uC591\uC774',
+  '\uD06C\uB808\uC774\uD130\uD0D0\uD5D8\uB300',
 ]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function projectKey(name: 'SUPABASE_PUBLISHABLE_KEYS' | 'SUPABASE_SECRET_KEYS'): string {
+function projectKey(name: 'SUPABASE_SECRET_KEYS'): string {
   const keys = JSON.parse(Deno.env.get(name) ?? '{}') as Record<string, string>;
   const key = keys.default ?? Object.values(keys)[0];
   if (!key) throw new Error(`Missing ${name}`);
@@ -32,17 +33,11 @@ function projectKey(name: 'SUPABASE_PUBLISHABLE_KEYS' | 'SUPABASE_SECRET_KEYS'):
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (request.method !== 'POST') {
-    return Response.json({ error: 'POST 요청만 사용할 수 있어요.' }, { status: 405, headers: cors });
+    return Response.json({ error: 'POST requests only.' }, { status: 405, headers: cors });
   }
 
   try {
     const body = await request.json() as Record<string, unknown>;
-    if (typeof body.runId === 'string' && body.runId) {
-      const authorization = request.headers.get('Authorization') ?? '';
-      const legacyResult = await submitLegacyScore(body, authorization);
-      return Response.json(legacyResult, { headers: cors });
-    }
-
     const gameId = String(body.gameId ?? '').trim();
     const nickname = String(body.nickname ?? '').trim();
     const score = Number(body.score);
@@ -51,15 +46,15 @@ Deno.serve(async (request) => {
       ? null
       : String(roomIdValue).trim();
 
-    if (!gameId) throw new Error('gameId가 필요해요.');
-    if (!nickname || nickname.length > 32) throw new Error('닉네임을 확인해 주세요.');
+    if (!gameId) throw new Error('gameId is required.');
+    if (!nickname || nickname.length > 32) throw new Error('Choose a valid nickname.');
     if (!Number.isSafeInteger(score) || score < 0 || score > 1_000_000_000) {
-      throw new Error('점수를 확인해 주세요.');
+      throw new Error('Choose a valid score.');
     }
-    if (roomId !== null && !UUID_PATTERN.test(roomId)) throw new Error('roomId를 확인해 주세요.');
+    if (roomId !== null && !UUID_PATTERN.test(roomId)) throw new Error('Choose a valid roomId.');
     if (gameId === MOON_MOVE_GAME_ID) {
-      if (roomId !== null) throw new Error('Moon Move는 roomId를 사용하지 않아요.');
-      if (!MOON_MOVE_NICKNAMES.has(nickname)) throw new Error('선택할 수 없는 닉네임이에요.');
+      if (roomId !== null) throw new Error('Moon Move does not use roomId.');
+      if (!MOON_MOVE_NICKNAMES.has(nickname)) throw new Error('Choose one of the available nicknames.');
     }
 
     const admin = createClient(
@@ -81,55 +76,3 @@ Deno.serve(async (request) => {
     );
   }
 });
-
-async function submitLegacyScore(body: Record<string, unknown>, authorization: string) {
-  const authClient = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    projectKey('SUPABASE_PUBLISHABLE_KEYS'),
-    { global: { headers: { Authorization: authorization } } },
-  );
-  const { data: { user }, error: userError } = await authClient.auth.getUser();
-  if (userError || !user) throw new Error('인증이 필요해요.');
-
-  const admin = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    projectKey('SUPABASE_SECRET_KEYS'),
-  );
-  const { data: runId, error: submitError } = await admin.rpc('submit_game_run', {
-    p_session_id: body.runId,
-    p_user_id: user.id,
-    p_score: body.score,
-    p_round: body.round,
-    p_stage_index: body.stageIndex,
-    p_correct_hits: body.correctHits,
-    p_wrong_hits: body.wrongHits,
-    p_missed_targets: body.missedTargets,
-    p_best_combo: body.bestCombo,
-    p_duration_ms: body.durationMs,
-  });
-  if (submitError) throw submitError;
-
-  const { data: rows, error: rankingError } = await admin.from('score_runs').select(
-    'id, school, grade, class_no, student_no, score, round, best_combo, created_at',
-  ).eq('game_version', 'moon-arcade-v1')
-    .order('score', { ascending: false }).order('round', { ascending: false })
-    .order('correct_hits', { ascending: false }).order('duration_ms', { ascending: true })
-    .order('created_at', { ascending: true }).limit(100);
-  if (rankingError) throw rankingError;
-
-  const { data: currentRank, error: rankError } = await admin.rpc('get_run_rank', { p_run_id: runId });
-  if (rankError) throw rankError;
-  const entries = (rows ?? []).map((row, index) => ({
-    id: row.id,
-    rank: index + 1,
-    school: row.school,
-    grade: row.grade,
-    classNo: row.class_no,
-    studentNo: row.student_no,
-    score: row.score,
-    round: row.round,
-    bestCombo: row.best_combo,
-    createdAt: row.created_at,
-  }));
-  return { entries, currentRank: Number(currentRank), currentRunId: runId };
-}
