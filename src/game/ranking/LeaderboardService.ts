@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 export const MOON_MOVE_GAME_ID = 'moon-move';
 
-export const MOON_MOVE_NICKNAMES = [
+const MOON_MOVE_NICKNAME_BASES = [
   '달토끼',
   '별가루',
   '초승달',
@@ -16,6 +16,10 @@ export const MOON_MOVE_NICKNAMES = [
   '우주고양이',
   '크레이터탐험대',
 ] as const;
+
+export const MOON_MOVE_NICKNAMES = MOON_MOVE_NICKNAME_BASES.flatMap((base) =>
+  Array.from({ length: 20 }, (_, index) => `${base}-${String(index + 1).padStart(2, '0')}`),
+);
 
 export type PlayerProfile = { nickname: string };
 export type RankingEntry = { id: string; rank: number; nickname: string; score: number };

@@ -7,7 +7,7 @@ const cors = {
 };
 
 const MOON_MOVE_GAME_ID = 'moon-move';
-const MOON_MOVE_NICKNAMES = new Set([
+const MOON_MOVE_NICKNAME_BASES = [
   '\uB2EC\uD1A0\uB07C',
   '\uBCC4\uAC00\uB8E8',
   '\uCD08\uC2B9\uB2EC',
@@ -20,7 +20,12 @@ const MOON_MOVE_NICKNAMES = new Set([
   '\uBCC4\uB625\uBCC4',
   '\uC6B0\uC8FC\uACE0\uC591\uC774',
   '\uD06C\uB808\uC774\uD130\uD0D0\uD5D8\uB300',
-]);
+];
+const MOON_MOVE_NICKNAMES = new Set(
+  MOON_MOVE_NICKNAME_BASES.flatMap((base) =>
+    Array.from({ length: 20 }, (_, index) => `${base}-${String(index + 1).padStart(2, '0')}`),
+  ),
+);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function projectKey(name: 'SUPABASE_SECRET_KEYS'): string {
