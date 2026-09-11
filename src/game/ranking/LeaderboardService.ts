@@ -1,14 +1,35 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { RunSummary } from '../simulation/state';
 
-export type StudentProfile = { school: string; grade: number; classNo: number; studentNo: number };
-export type RankingEntry = StudentProfile & {
-  id: string; rank: number; score: number; round: number; bestCombo: number; createdAt: string;
+export const MOON_MOVE_GAME_ID = 'moon-move';
+
+export const MOON_MOVE_NICKNAMES = [
+  '달토끼',
+  '별가루',
+  '초승달',
+  '보름달',
+  '우주비행사',
+  '혜성',
+  '밤구름',
+  '은하수',
+  '달빛탐험가',
+  '별똥별',
+  '우주고양이',
+  '크레이터탐험대',
+] as const;
+
+export type PlayerProfile = { nickname: string };
+export type RankingEntry = { id: string; rank: number; nickname: string; score: number };
+export type RankingResult = {
+  entries: RankingEntry[];
+  currentRank: number;
+  currentRunId: string;
+  remote: boolean;
 };
-export type RankingResult = { entries: RankingEntry[]; currentRank: number; currentRunId: string; remote: boolean };
 
-const PROFILE_KEY = 'moon-arcade-recent-profile-v1';
-const LOCAL_RANKING_KEY = 'moon-arcade-local-ranking-v1';
+type LocalScore = { id: string; nickname: string; score: number };
+
+const PROFILE_KEY = 'moon-arcade-recent-nickname-v1';
+const LOCAL_RANKING_KEY = 'moon-arcade-local-ranking-v2';
 
 export class LeaderboardService {
   private readonly client: SupabaseClient | null;
@@ -25,50 +46,61 @@ export class LeaderboardService {
   get connected(): boolean { return Boolean(this.client); }
   get runSeed(): number { return this.seed; }
 
-  loadRecentProfile(): StudentProfile | null {
-    try { return JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null') as StudentProfile | null; }
-    catch { return null; }
+  loadRecentProfile(): PlayerProfile | null {
+    try {
+      const value = JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null') as Partial<PlayerProfile> | null;
+      return value?.nickname && isAllowedNickname(value.nickname) ? { nickname: value.nickname } : null;
+    } catch {
+      return null;
+    }
   }
 
-  saveRecentProfile(profile: StudentProfile): void {
+  saveRecentProfile(profile: PlayerProfile): void {
     localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
   }
 
   clearRecentProfile(): void { localStorage.removeItem(PROFILE_KEY); }
 
-  async startRun(profile: StudentProfile): Promise<number> {
+  async startRun(profile: PlayerProfile): Promise<number> {
     this.saveRecentProfile(profile);
     this.runId = crypto.randomUUID();
     this.seed = crypto.getRandomValues(new Uint32Array(1))[0];
     this.remoteRun = false;
-    if (!this.client) return this.seed;
-    try {
-      const { error: authError } = await this.ensureAuth();
-      if (authError) throw authError;
-      const { data, error } = await this.client.functions.invoke('start-run', { body: profile });
-      if (error || !data?.runId) throw error ?? new Error('게임 세션을 만들지 못했습니다.');
-      this.runId = data.runId;
-      this.seed = Number(data.seed) || this.seed;
-      this.remoteRun = true;
-    } catch (error) {
-      console.warn('Supabase start-run unavailable; using local ranking.', error);
+    if (this.client) {
+      try {
+        const { error } = await this.ensureAuth();
+        if (error) throw error;
+        this.remoteRun = true;
+      } catch (error) {
+        console.warn('Supabase authentication unavailable; using local ranking.', error);
+      }
     }
     return this.seed;
   }
 
-  async submit(profile: StudentProfile, summary: RunSummary): Promise<RankingResult> {
+  async submit(profile: PlayerProfile, score: number): Promise<RankingResult> {
     if (this.client && this.remoteRun) {
       try {
         const { data, error } = await this.client.functions.invoke('submit-score', {
-          body: { runId: this.runId, ...summary },
+          body: {
+            gameId: MOON_MOVE_GAME_ID,
+            roomId: null,
+            nickname: profile.nickname,
+            score,
+          },
         });
-        if (error || !data?.entries) throw error ?? new Error('랭킹을 불러오지 못했습니다.');
-        return { entries: data.entries, currentRank: data.currentRank, currentRunId: data.currentRunId, remote: true };
+        if (error || !data?.entries) throw error ?? new Error('점수를 등록하지 못했어요.');
+        return {
+          entries: data.entries as RankingEntry[],
+          currentRank: Number(data.currentRank),
+          currentRunId: String(data.currentRunId),
+          remote: true,
+        };
       } catch (error) {
         console.warn('Supabase score submission unavailable; using local ranking.', error);
       }
     }
-    return this.submitLocal(profile, summary);
+    return this.submitLocal(profile, score);
   }
 
   private async ensureAuth() {
@@ -77,18 +109,45 @@ export class LeaderboardService {
     return this.client!.auth.signInAnonymously();
   }
 
-  private submitLocal(profile: StudentProfile, summary: RunSummary): RankingResult {
-    const record = {
-      id: this.runId, ...profile, score: summary.score, round: summary.round,
-      bestCombo: summary.bestCombo, durationMs: summary.durationMs, createdAt: new Date().toISOString(),
+  private submitLocal(profile: PlayerProfile, score: number): RankingResult {
+    const record: LocalScore = {
+      id: this.runId,
+      nickname: profile.nickname,
+      score: Math.max(0, Math.trunc(score)),
     };
-    let records: Array<typeof record> = [];
-    try { records = JSON.parse(localStorage.getItem(LOCAL_RANKING_KEY) ?? '[]'); } catch { records = []; }
+    let records: LocalScore[] = [];
+    try {
+      const stored = JSON.parse(localStorage.getItem(LOCAL_RANKING_KEY) ?? '[]') as unknown;
+      records = Array.isArray(stored) ? stored.filter(isLocalScore) : [];
+    } catch {
+      records = [];
+    }
     records.push(record);
-    records.sort((a, b) => b.score - a.score || b.round - a.round || a.durationMs - b.durationMs || a.createdAt.localeCompare(b.createdAt));
-    localStorage.setItem(LOCAL_RANKING_KEY, JSON.stringify(records.slice(0, 500)));
-    const currentRank = records.findIndex((entry) => entry.id === this.runId) + 1;
-    const entries = records.slice(0, 100).map((entry, index) => ({ ...entry, rank: index + 1 }));
-    return { entries, currentRank, currentRunId: this.runId, remote: false };
+    records.sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname, 'ko') || a.id.localeCompare(b.id));
+    records = records.slice(0, 500);
+    localStorage.setItem(LOCAL_RANKING_KEY, JSON.stringify(records));
+
+    const rankFor = (entry: LocalScore): number => records.filter((candidate) => candidate.score > entry.score).length + 1;
+    const entries = records.slice(0, 10).map((entry) => ({ ...entry, rank: rankFor(entry) }));
+    return {
+      entries,
+      currentRank: rankFor(record),
+      currentRunId: this.runId,
+      remote: false,
+    };
   }
+}
+
+function isAllowedNickname(value: string): boolean {
+  return (MOON_MOVE_NICKNAMES as readonly string[]).includes(value);
+}
+
+function isLocalScore(value: unknown): value is LocalScore {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Partial<LocalScore>;
+  return typeof entry.id === 'string'
+    && typeof entry.nickname === 'string'
+    && isAllowedNickname(entry.nickname)
+    && typeof entry.score === 'number'
+    && Number.isFinite(entry.score);
 }

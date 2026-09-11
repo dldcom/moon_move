@@ -14,10 +14,6 @@ const FORBIDDEN_DUAL_PAIRS = new Set([
 ]);
 
 export type SelectionResult = { correct: boolean; gameOver: boolean; gainedScore: number; gainedLife: boolean };
-export type RunSummary = {
-  score: number; round: number; stageIndex: number; correctHits: number;
-  wrongHits: number; missedTargets: number; bestCombo: number; durationMs: number;
-};
 
 export class ArcadeState {
   readonly stageDuration = 18;
@@ -31,11 +27,7 @@ export class ArcadeState {
   round = 1;
   stageElapsed = 0;
   gameOver = false;
-  correctHits = 0;
-  wrongHits = 0;
-  missedTargets = 0;
   targets: MoonPhase[] = [MOON_PHASES[0].key];
-  private startedAt = performance.now();
   private random = mulberry32(1);
 
   get target() { return MOON_PHASES.find((phase) => phase.key === this.targets[0])!; }
@@ -51,11 +43,7 @@ export class ArcadeState {
     this.round = 1;
     this.stageElapsed = 0;
     this.gameOver = false;
-    this.correctHits = 0;
-    this.wrongHits = 0;
-    this.missedTargets = 0;
     this.random = mulberry32(seed);
-    this.startedAt = performance.now();
     this.targets = [MOON_PHASES[0].key];
   }
 
@@ -71,7 +59,6 @@ export class ArcadeState {
   select(phase: MoonPhase): SelectionResult {
     if (this.gameOver) return { correct: false, gameOver: true, gainedScore: 0, gainedLife: false };
     if (this.isTarget(phase)) {
-      this.correctHits += 1;
       this.combo += 1;
       this.bestCombo = Math.max(this.bestCombo, this.combo);
       const multiplier = Math.min(5, 1 + Math.floor((this.combo - 1) / 3));
@@ -81,7 +68,6 @@ export class ArcadeState {
       if (gainedLife) this.hp += 1;
       return { correct: true, gameOver: false, gainedScore, gainedLife };
     }
-    this.wrongHits += 1;
     this.combo = 0;
     this.hp = Math.max(0, this.hp - 1);
     this.gameOver = this.hp === 0;
@@ -90,18 +76,8 @@ export class ArcadeState {
 
   miss(phase: MoonPhase): boolean {
     if (this.gameOver || !this.isTarget(phase)) return false;
-    this.missedTargets += 1;
     this.combo = 0;
     return true;
-  }
-
-  summary(): RunSummary {
-    return {
-      score: this.score, round: this.round, stageIndex: this.stageIndex,
-      correctHits: this.correctHits, wrongHits: this.wrongHits,
-      missedTargets: this.missedTargets, bestCombo: this.bestCombo,
-      durationMs: Math.round(performance.now() - this.startedAt),
-    };
   }
 
   private advanceStage(): void {

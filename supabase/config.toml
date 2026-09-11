@@ -3,8 +3,5 @@ project_id = "moon-move"
 [auth]
 enable_anonymous_sign_ins = true
 
-[functions.start-run]
-verify_jwt = true
-
 [functions.submit-score]
 verify_jwt = true

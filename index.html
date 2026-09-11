@@ -74,21 +74,14 @@
         <div id="arcade-player-gate" class="arcade-player-gate">
           <form id="arcade-player-form" class="player-form">
             <small>MOON ARCADE</small>
-            <h2>도전자 정보를 입력하세요</h2>
-            <label>학교명
-              <span class="school-name-field">
-                <input id="arcade-school" name="school" maxlength="20" autocomplete="organization" aria-label="학교 이름" required />
-                <span class="school-name-suffix" aria-hidden="true">초등학교</span>
-              </span>
+            <h2>닉네임을 골라 주세요</h2>
+            <label for="arcade-nickname">닉네임
+              <select id="arcade-nickname" name="nickname" required></select>
             </label>
-            <div class="student-number-grid">
-              <label>학년<input id="arcade-grade" name="grade" type="number" min="1" max="6" inputmode="numeric" required /></label>
-              <label>반<input id="arcade-class" name="classNo" type="number" min="1" max="30" inputmode="numeric" required /></label>
-              <label>번호<input id="arcade-student-no" name="studentNo" type="number" min="1" max="99" inputmode="numeric" required /></label>
-            </div>
+            <p>모두가 함께 보는 랭킹에는 선택한 닉네임만 표시돼요.</p>
             <p id="arcade-player-status" class="is-hidden" aria-live="polite"></p>
             <button id="arcade-start-run" type="submit">게임 시작!</button>
-            <button id="arcade-clear-profile" class="secondary-form-button" type="button">다른 정보로 입력</button>
+            <button id="arcade-clear-profile" class="secondary-form-button" type="button">닉네임 다시 고르기</button>
           </form>
         </div>
         <div id="arcade-canvas" class="arcade-canvas"></div>
@@ -119,8 +112,8 @@
             <p id="arcade-current-rank" class="current-rank">랭킹 계산 중…</p>
             <button id="arcade-retry" type="button">다시 하기</button>
           </div>
-          <section class="leaderboard-panel" aria-label="상위 100위 랭킹">
-            <div class="leaderboard-heading"><div><small>TOP 100</small><h3>달 탐험 랭킹</h3></div><span id="arcade-ranking-source"></span></div>
+          <section class="leaderboard-panel" aria-label="상위 10위 랭킹">
+            <div class="leaderboard-heading"><div><small>TOP 10</small><h3>달 탐험 랭킹</h3></div><span id="arcade-ranking-source"></span></div>
             <ol id="arcade-ranking-list" class="ranking-list"></ol>
           </section>
         </div>

@@ -11,10 +11,7 @@ test('2D moon arcade boots and fills the playfield', async ({ page }, testInfo) 
   await page.locator('#game-button').click();
   await expect(page.locator('#arcade-shell')).toBeVisible();
   await expect(page.locator('#arcade-player-gate')).toBeVisible();
-  await page.locator('#arcade-school').fill('별빛초등학교');
-  await page.locator('#arcade-grade').fill('4');
-  await page.locator('#arcade-class').fill('2');
-  await page.locator('#arcade-student-no').fill('7');
+  await page.locator('#arcade-nickname').selectOption({ label: '달토끼' });
   await page.locator('#arcade-start-run').click();
   await expect(page.locator('#arcade-player-gate')).toBeHidden({ timeout: 15_000 });
   await expect(page.locator('#arcade-target-name')).toHaveText('초승달');

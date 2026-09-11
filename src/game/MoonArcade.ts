@@ -1,7 +1,12 @@
 import Phaser from 'phaser';
 import { HUD_ASSETS } from './assets/manifest';
 import { MoonGameScene } from './phaser/MoonGameScene';
-import { LeaderboardService, type RankingResult, type StudentProfile } from './ranking/LeaderboardService';
+import {
+  LeaderboardService,
+  MOON_MOVE_NICKNAMES,
+  type RankingResult,
+  type PlayerProfile,
+} from './ranking/LeaderboardService';
 import { ArcadeState } from './simulation/state';
 
 export class MoonArcade {
@@ -25,10 +30,7 @@ export class MoonArcade {
   private readonly reviewButton: HTMLButtonElement;
   private readonly playerGate = required<HTMLElement>('arcade-player-gate');
   private readonly playerForm = required<HTMLFormElement>('arcade-player-form');
-  private readonly schoolInput = required<HTMLInputElement>('arcade-school');
-  private readonly gradeInput = required<HTMLInputElement>('arcade-grade');
-  private readonly classInput = required<HTMLInputElement>('arcade-class');
-  private readonly studentNoInput = required<HTMLInputElement>('arcade-student-no');
+  private readonly nicknameInput = required<HTMLSelectElement>('arcade-nickname');
   private readonly clearProfileButton = required<HTMLButtonElement>('arcade-clear-profile');
   private readonly startRunButton = required<HTMLButtonElement>('arcade-start-run');
   private readonly playerStatus = required<HTMLElement>('arcade-player-status');
@@ -37,19 +39,20 @@ export class MoonArcade {
   private readonly rankingSource = required<HTMLElement>('arcade-ranking-source');
   private game: Phaser.Game | null = null;
   private scene: MoonGameScene | null = null;
-  private profile: StudentProfile | null = null;
+  private profile: PlayerProfile | null = null;
   private stageCardTimer = 0;
   private submitted = false;
 
   constructor(_shell: HTMLElement) {
     const gameOverPanel = required<HTMLElement>('arcade-retry').parentElement!;
-    this.rankingToggleButton = ensureActionButton('arcade-ranking-toggle', 'TOP 100 보기', gameOverPanel);
+    this.rankingToggleButton = ensureActionButton('arcade-ranking-toggle', 'TOP 10 보기', gameOverPanel);
     this.reviewButton = ensureActionButton('arcade-review-learning', '헷갈린 달 다시 알아보기', gameOverPanel);
     this.rankingToggleButton.classList.add('game-over-secondary');
     this.reviewButton.classList.add('game-over-secondary');
   }
 
   start(): void {
+    this.populateNicknames();
     this.playerForm.addEventListener('submit', this.beginRun);
     this.clearProfileButton.addEventListener('click', this.clearProfile);
     this.retryButton.addEventListener('click', this.retry);
@@ -78,7 +81,7 @@ export class MoonArcade {
     this.profile = this.readProfile();
     this.startRunButton.disabled = true;
     this.startRunButton.textContent = '준비 중…';
-    this.playerStatus.textContent = '게임 세션을 준비하고 있어요.';
+    this.playerStatus.textContent = '게임을 준비하고 있어요.';
     this.playerStatus.classList.remove('is-hidden');
     const seed = await this.leaderboard.startRun(this.profile);
     this.state.reset(seed);
@@ -87,7 +90,7 @@ export class MoonArcade {
     this.currentRank.textContent = '랭킹 계산 중…';
     this.gameOver.classList.add('is-hidden');
     this.rankingPanel.classList.remove('is-ranking-open');
-    this.rankingToggleButton.textContent = 'TOP 100 보기';
+    this.rankingToggleButton.textContent = 'TOP 10 보기';
     this.playerGate.classList.add('is-hidden');
     this.startRunButton.disabled = false;
     this.startRunButton.textContent = '게임 시작!';
@@ -100,20 +103,20 @@ export class MoonArcade {
     this.fillProfile(this.leaderboard.loadRecentProfile());
     this.syncConnectionStatus();
     this.playerGate.classList.remove('is-hidden');
-    this.schoolInput.focus();
+    this.nicknameInput.focus();
   };
 
   private readonly clearProfile = (): void => {
     this.leaderboard.clearRecentProfile();
     this.fillProfile(null);
-    this.schoolInput.focus();
+    this.nicknameInput.focus();
   };
 
   private readonly back = (): void => window.location.reload();
 
   private readonly toggleRanking = (): void => {
     const opened = this.rankingPanel.classList.toggle('is-ranking-open');
-    this.rankingToggleButton.textContent = opened ? '랭킹 닫기' : 'TOP 100 보기';
+    this.rankingToggleButton.textContent = opened ? '랭킹 닫기' : 'TOP 10 보기';
   };
 
   private readonly reviewLearning = (): void => {
@@ -176,43 +179,51 @@ export class MoonArcade {
   private async finishRun(): Promise<void> {
     if (!this.profile) return;
     this.currentRank.textContent = '점수를 등록하고 있어요…';
-    const ranking = await this.leaderboard.submit(this.profile, this.state.summary());
+    const ranking = await this.leaderboard.submit(this.profile, this.state.score);
     this.renderRanking(ranking);
   }
 
   private renderRanking(result: RankingResult): void {
-    this.currentRank.textContent = result.currentRank <= 100
+    this.currentRank.textContent = result.currentRank <= 10
       ? `이번 기록은 ${result.currentRank}위예요!`
-      : `이번 기록은 ${result.currentRank}위예요. TOP 100에 도전하세요!`;
+      : `이번 기록은 ${result.currentRank}위예요. TOP 10에 도전하세요!`;
     this.rankingSource.textContent = result.remote ? '온라인 랭킹' : '이 기기의 임시 랭킹';
     const rows = result.entries.map((entry) => {
       const row = document.createElement('li');
       if (entry.id === result.currentRunId) row.classList.add('is-current');
       const rank = document.createElement('strong');
       rank.textContent = `${entry.rank}`;
-      const student = document.createElement('span');
-      student.textContent = `${entry.school} ${entry.grade}학년 ${entry.classNo}반 ${entry.studentNo}번`;
+      const nickname = document.createElement('span');
+      nickname.textContent = entry.nickname;
       const score = document.createElement('b');
       score.textContent = entry.score.toLocaleString('ko-KR');
-      row.append(rank, student, score);
+      row.append(rank, nickname, score);
       return row;
     });
     this.rankingList.replaceChildren(...rows);
   }
 
-  private readProfile(): StudentProfile {
-    const schoolPrefix = this.schoolInput.value.trim().replace(/초등학교$/, '');
-    return {
-      school: `${schoolPrefix}초등학교`, grade: Number(this.gradeInput.value),
-      classNo: Number(this.classInput.value), studentNo: Number(this.studentNoInput.value),
-    };
+  private readProfile(): PlayerProfile {
+    return { nickname: this.nicknameInput.value };
   }
 
-  private fillProfile(profile: StudentProfile | null): void {
-    this.schoolInput.value = profile?.school.replace(/초등학교$/, '') ?? '';
-    this.gradeInput.value = profile ? String(profile.grade) : '';
-    this.classInput.value = profile ? String(profile.classNo) : '';
-    this.studentNoInput.value = profile ? String(profile.studentNo) : '';
+  private fillProfile(profile: PlayerProfile | null): void {
+    this.nicknameInput.value = profile?.nickname ?? '';
+  }
+
+  private populateNicknames(): void {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '닉네임을 골라 주세요';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    const options = MOON_MOVE_NICKNAMES.map((nickname) => {
+      const option = document.createElement('option');
+      option.value = nickname;
+      option.textContent = nickname;
+      return option;
+    });
+    this.nicknameInput.replaceChildren(placeholder, ...options);
   }
 
   private syncConnectionStatus(): void {
