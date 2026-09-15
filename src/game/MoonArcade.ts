@@ -3,7 +3,7 @@ import { HUD_ASSETS } from './assets/manifest';
 import { MoonGameScene } from './phaser/MoonGameScene';
 import {
   LeaderboardService,
-  MOON_MOVE_NICKNAMES,
+  MOON_MOVE_NICKNAME_BASES,
   type RankingResult,
   type PlayerProfile,
 } from './ranking/LeaderboardService';
@@ -83,7 +83,15 @@ export class MoonArcade {
     this.startRunButton.textContent = '준비 중…';
     this.playerStatus.textContent = '게임을 준비하고 있어요.';
     this.playerStatus.classList.remove('is-hidden');
-    const seed = await this.leaderboard.startRun(this.profile);
+    let seed: number;
+    try {
+      seed = await this.leaderboard.startRun(this.profile);
+    } catch (error) {
+      this.playerStatus.textContent = error instanceof Error ? error.message : '닉네임을 배정하지 못했어요.';
+      this.startRunButton.disabled = false;
+      this.startRunButton.textContent = '게임 시작!';
+      return;
+    }
     this.state.reset(seed);
     this.submitted = false;
     this.rankingList.replaceChildren();
@@ -217,7 +225,7 @@ export class MoonArcade {
     placeholder.textContent = '닉네임을 골라 주세요';
     placeholder.disabled = true;
     placeholder.selected = true;
-    const options = MOON_MOVE_NICKNAMES.map((nickname) => {
+    const options = MOON_MOVE_NICKNAME_BASES.map((nickname) => {
       const option = document.createElement('option');
       option.value = nickname;
       option.textContent = nickname;

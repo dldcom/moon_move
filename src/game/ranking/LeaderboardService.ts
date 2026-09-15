@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 export const MOON_MOVE_GAME_ID = 'moon-move';
 
-const MOON_MOVE_NICKNAME_BASES = [
+export const MOON_MOVE_NICKNAME_BASES = [
   '달토끼',
   '별가루',
   '초승달',
@@ -32,7 +32,7 @@ export type RankingResult = {
 
 type LocalScore = { id: string; nickname: string; score: number };
 
-const PROFILE_KEY = 'moon-arcade-recent-nickname-v1';
+const PROFILE_KEY = 'moon-arcade-recent-nickname-v2';
 const LOCAL_RANKING_KEY = 'moon-arcade-local-ranking-v2';
 
 export class LeaderboardService {
@@ -53,7 +53,7 @@ export class LeaderboardService {
   loadRecentProfile(): PlayerProfile | null {
     try {
       const value = JSON.parse(localStorage.getItem(PROFILE_KEY) ?? 'null') as Partial<PlayerProfile> | null;
-      return value?.nickname && isAllowedNickname(value.nickname) ? { nickname: value.nickname } : null;
+      return value?.nickname && isBaseNickname(value.nickname) ? { nickname: value.nickname } : null;
     } catch {
       return null;
     }
@@ -66,7 +66,8 @@ export class LeaderboardService {
   clearRecentProfile(): void { localStorage.removeItem(PROFILE_KEY); }
 
   async startRun(profile: PlayerProfile): Promise<number> {
-    this.saveRecentProfile(profile);
+    const baseNickname = profile.nickname;
+    this.saveRecentProfile({ nickname: baseNickname });
     this.runId = crypto.randomUUID();
     this.seed = crypto.getRandomValues(new Uint32Array(1))[0];
     this.remoteRun = false;
@@ -74,11 +75,25 @@ export class LeaderboardService {
       try {
         const { error } = await this.ensureAuth();
         if (error) throw error;
+        const { data, error: claimError } = await this.client.rpc('claim_nickname', {
+          p_game_id: MOON_MOVE_GAME_ID,
+          p_room_id: null,
+          p_base_nickname: baseNickname,
+        });
+        if (claimError) throw claimError;
+        if (typeof data !== 'string' || !isAllowedNickname(data)) {
+          throw new Error('The server returned an invalid nickname.');
+        }
+        profile.nickname = data;
         this.remoteRun = true;
       } catch (error) {
+        if (isNicknamePoolExhausted(error)) {
+          throw new Error('오늘 사용할 수 있는 닉네임이 모두 사용 중이에요. 다른 기본 이름을 골라 주세요.');
+        }
         console.warn('Supabase authentication unavailable; using local ranking.', error);
       }
     }
+    if (!this.remoteRun) profile.nickname = this.allocateLocalNickname(baseNickname);
     return this.seed;
   }
 
@@ -113,19 +128,32 @@ export class LeaderboardService {
     return this.client!.auth.signInAnonymously();
   }
 
+  private loadLocalScores(): LocalScore[] {
+    try {
+      const stored = JSON.parse(localStorage.getItem(LOCAL_RANKING_KEY) ?? '[]') as unknown;
+      return Array.isArray(stored) ? stored.filter(isLocalScore) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private allocateLocalNickname(baseNickname: string): string {
+    const records = this.loadLocalScores();
+    const candidate = MOON_MOVE_NICKNAMES.find((nickname) =>
+      nickname.startsWith(`${baseNickname}-`)
+      && !records.some((record) => record.nickname === nickname),
+    );
+    if (!candidate) throw new Error('오늘 사용할 수 있는 닉네임이 모두 사용 중이에요. 다른 기본 이름을 골라 주세요.');
+    return candidate;
+  }
+
   private submitLocal(profile: PlayerProfile, score: number): RankingResult {
     const record: LocalScore = {
       id: this.runId,
       nickname: profile.nickname,
       score: Math.max(0, Math.trunc(score)),
     };
-    let records: LocalScore[] = [];
-    try {
-      const stored = JSON.parse(localStorage.getItem(LOCAL_RANKING_KEY) ?? '[]') as unknown;
-      records = Array.isArray(stored) ? stored.filter(isLocalScore) : [];
-    } catch {
-      records = [];
-    }
+    let records = this.loadLocalScores();
     records.push(record);
     records.sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname, 'ko') || a.id.localeCompare(b.id));
     records = records.slice(0, 500);
@@ -144,6 +172,19 @@ export class LeaderboardService {
 
 function isAllowedNickname(value: string): boolean {
   return (MOON_MOVE_NICKNAMES as readonly string[]).includes(value);
+}
+
+function isBaseNickname(value: string): boolean {
+  return (MOON_MOVE_NICKNAME_BASES as readonly string[]).includes(value);
+}
+
+function isNicknamePoolExhausted(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'object' && error !== null && 'message' in error
+      ? String(error.message)
+      : String(error);
+  return message.toLowerCase().includes('no nickname available');
 }
 
 function isLocalScore(value: unknown): value is LocalScore {
